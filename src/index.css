@@ -1,0 +1,1013 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color: #111;
+  background: #f2f2f7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  --bg: #f2f2f7;
+  --card: #ffffff;
+  --text: #111111;
+  --muted: #8e8e93;
+  --line: #e5e5ea;
+  --blue: #007aff;
+  --green: #34c759;
+  --red: #ff3b30;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.055);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app {
+  width: min(720px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 14px 12px 92px;
+}
+
+.topHero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 2px 8px;
+}
+
+.miniTitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--blue);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.topHero h1 {
+  margin: 2px 0 0;
+  font-size: 28px;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+
+.todayButton {
+  border: none;
+  background: var(--card);
+  color: var(--blue);
+  border-radius: 999px;
+  padding: 10px 15px;
+  font-weight: 800;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+/* 記録画面の日付ナビ */
+.dateNavigator {
+  padding: 4px 0 0;
+}
+
+.dateNavTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.dateNavTop p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dateNavTop strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 17px;
+  letter-spacing: -0.03em;
+}
+
+.dateNavTop button {
+  border: none;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--blue);
+  padding: 10px 13px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+/* 横スクロール日付 */
+.dateStrip {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 3px 2px 7px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-padding-inline: 50%;
+}
+
+.dateStrip::-webkit-scrollbar {
+  display: none;
+}
+
+.stripDay {
+  position: relative;
+  flex: 0 0 46px;
+  height: 58px;
+  border: none;
+  border-radius: 15px;
+  background: #ffffff;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.stripDay small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.stripDay span {
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.stripDay.today {
+  background: #e8f2ff;
+  color: var(--blue);
+}
+
+.stripDay.today small {
+  color: var(--blue);
+}
+
+.stripDay.selected {
+  background: var(--blue);
+  color: white;
+  box-shadow: none;
+}
+
+.stripDay.selected small {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.stripDay.saved:not(.selected):not(.today) {
+  background: #e8f8ee;
+  color: #15803d;
+}
+
+.stripDay i {
+  position: absolute;
+  bottom: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+/* 開閉カレンダー */
+.miniCalendarWrap {
+  margin-top: 8px;
+}
+
+.calendarMonthControl {
+  display: grid;
+  grid-template-columns: 38px 1fr 38px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.calendarMonthControl button {
+  height: 36px;
+  border: none;
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--blue);
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.calendarMonthControl strong {
+  text-align: center;
+  font-size: 16px;
+}
+
+.calendarCard {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+.weekRow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 7px;
+}
+
+.weekRow span {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.calendarGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+
+.dayCell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: none;
+  border-radius: 13px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.dayCell.empty {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dayCell span {
+  position: relative;
+  z-index: 2;
+}
+
+.dayCell.today {
+  color: var(--blue);
+  background: #e8f2ff;
+}
+
+.dayCell.saved:not(.selected) {
+  background: #dff5e7;
+  color: #14823a;
+}
+
+.dayCell.selected {
+  background: var(--blue);
+  color: white;
+  box-shadow: none;
+}
+
+.dayCell i {
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  width: 5px;
+  height: 5px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: currentColor;
+}
+
+/* 月写真の月切り替え */
+.monthBar {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.monthBar button {
+  height: 42px;
+  border: none;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--blue);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.monthBar strong {
+  text-align: center;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+/* 今日の肌記録 */
+.dateSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 14px 0 8px;
+}
+
+.dateSummary p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.dateSummary h2 {
+  margin: 2px 0 0;
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+
+.dateActions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dateActions button {
+  min-width: 64px;
+  min-height: 48px;
+  border: none;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--blue);
+  padding: 14px 18px;
+  font-size: 15px;
+  font-weight: 900;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+/* カード */
+.photoDiaryCard,
+.compactCard,
+.memoCard {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 14px;
+  margin-top: 12px;
+  box-shadow: var(--shadow);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.cardHead.simple {
+  margin-bottom: 9px;
+}
+
+.cardHead h3 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+
+.cardHead p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* いつの記録 */
+.photoMomentTabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+  background: #f2f2f7;
+  border-radius: 999px;
+  padding: 5px;
+}
+
+.photoMomentTabs button {
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  padding: 9px 4px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.photoMomentTabs button.active {
+  background: var(--card);
+  color: var(--blue);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.06);
+}
+
+/* 写真 */
+.singlePhotoRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.photoSlot {
+  min-width: 0;
+}
+
+.photoThumb,
+.photoAdd {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: none;
+  border-radius: 15px;
+  overflow: hidden;
+  background: #f2f2f7;
+  cursor: pointer;
+}
+
+.photoThumb {
+  display: block;
+  padding: 0;
+}
+
+.photoThumb img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center center;
+}
+
+.photoAdd {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  color: var(--blue);
+}
+
+.photoAdd input {
+  display: none;
+}
+
+.photoAdd span {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #ffffff;
+  font-size: 30px;
+  font-weight: 300;
+  box-shadow: none;
+}
+
+.photoAdd small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+/* 肌感覚 */
+.tinyScores {
+  display: grid;
+  gap: 8px;
+}
+
+.tinyScore {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.tinyScore span {
+  font-size: 13px;
+  font-weight: 800;
+  color: #3a3a3c;
+}
+
+.scoreButtons {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+
+.scoreButtons button {
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: #f2f2f7;
+  color: #6b6b70;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.scoreButtons button.on {
+  background: var(--blue);
+  color: white;
+}
+
+/* メモ */
+.memoCard {
+  display: grid;
+  gap: 12px;
+}
+
+.memoCard label {
+  display: grid;
+  gap: 7px;
+}
+
+.memoCard span {
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.memoCard textarea {
+  width: 100%;
+  min-height: 104px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  border-radius: 16px;
+  background: #f2f2f7;
+  color: var(--text);
+  padding: 13px;
+  line-height: 1.65;
+}
+
+.memoCard textarea:focus {
+  box-shadow: inset 0 0 0 2px rgba(0, 122, 255, 0.22);
+  background: #ffffff;
+}
+
+.bulletTextarea {
+  min-height: 135px;
+  overflow: hidden;
+}
+
+.deleteDayButton {
+  width: 100%;
+  margin-top: 12px;
+  border: none;
+  border-radius: 14px;
+  padding: 11px;
+  background: transparent;
+  color: rgba(255, 59, 48, 0.72);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* 月写真 */
+.galleryPage {
+  margin-top: 14px;
+}
+
+.galleryHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding: 0 2px;
+}
+
+.galleryHead h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+
+.galleryHead span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.compareTabs,
+.momentTabs {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 9px;
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 999px;
+  padding: 6px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
+.compareTabs {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.momentTabs {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.compareTabs button,
+.momentTabs button {
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  padding: 9px 4px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.compareTabs button.active,
+.momentTabs button.active {
+  background: var(--blue);
+  color: white;
+}
+
+.photoMonthGrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.photoMonthItem {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: none;
+  padding: 0;
+  background: #d1d1d6;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.photoMonthItem img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center center;
+}
+
+.photoMonthItem span {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  z-index: 2;
+  min-width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.48);
+  color: white;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  backdrop-filter: blur(8px);
+}
+
+.emptyGallery {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  background: var(--card);
+  border-radius: 24px;
+  color: var(--muted);
+  font-weight: 800;
+  box-shadow: var(--shadow);
+  text-align: center;
+  padding: 18px;
+}
+
+/* 下タブ */
+.bottomNav {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: min(360px, calc(100% - 28px));
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.13);
+}
+
+.bottomNav button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.bottomNav button.active {
+  background: var(--blue);
+  color: white;
+}
+
+/* iPhone写真ライブラリ風ビューア */
+.photoViewer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: #000;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+.viewerTop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  height: 72px;
+  display: grid;
+  grid-template-columns: 82px 1fr 82px;
+  align-items: center;
+  padding: 14px 14px 10px;
+  color: white;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.74), transparent);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.viewerTop.hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+}
+
+.viewerClose,
+.viewerTrash {
+  border: none;
+  background: transparent;
+  color: white;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.viewerClose {
+  text-align: left;
+}
+
+.viewerTrash {
+  text-align: right;
+  color: #ff453a;
+}
+
+.viewerCount {
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.74);
+  font-weight: 800;
+}
+
+.viewerTapArea {
+  width: 100%;
+  height: 100vh;
+  border: none;
+  padding: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.viewerImage {
+  max-width: 100%;
+  max-height: 100vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.viewerBottom {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  min-height: 86px;
+  display: grid;
+  place-items: end center;
+  padding: 18px 18px 26px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.74), transparent);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.viewerBottom.hidden {
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+}
+
+.viewerBottom p {
+  margin: 0;
+  color: white;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.viewerNav {
+  position: fixed;
+  top: 50%;
+  z-index: 5;
+  width: 46px;
+  height: 64px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.16);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 44px;
+  line-height: 1;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.viewerNav.left {
+  left: 8px;
+}
+
+.viewerNav.right {
+  right: 8px;
+}
+
+/* スマホ調整 */
+@media (max-width: 520px) {
+  .app {
+    padding: 12px 10px 92px;
+  }
+    .photoMomentTabs {
+      gap: 4px;
+      padding: 4px;
+    }
+  
+    .photoMomentTabs button {
+      padding: 8px 2px;
+      font-size: 10.5px;
+    }
+
+  .topHero h1 {
+    font-size: 25px;
+  }
+
+  .dateStrip {
+    gap: 6px;
+  }
+
+  .stripDay {
+    flex-basis: 43px;
+    height: 54px;
+    border-radius: 14px;
+  }
+
+  .stripDay span {
+    font-size: 16px;
+  }
+
+  .dateSummary {
+    align-items: flex-start;
+  }
+
+  .dateActions {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+.dateActions button {
+  padding: 13px 16px;
+  font-size: 14px;
+}
+
+  .calendarGrid {
+    gap: 4px;
+  }
+
+  .dayCell {
+    border-radius: 11px;
+    font-size: 12px;
+  }
+
+  .photoDiaryCard,
+  .compactCard,
+  .memoCard {
+    border-radius: 22px;
+    padding: 12px;
+  }
+
+  .photoMomentSelectBox {
+    grid-template-columns: 82px 1fr;
+    padding: 7px 8px;
+  }
+
+  .photoMomentSelectBox span {
+    font-size: 12px;
+  }
+
+  .photoMomentSelectBox select {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+
+  .singlePhotoRow {
+    gap: 6px;
+  }
+
+  .photoThumb,
+  .photoAdd {
+    border: 1px dashed #c7c7cc;
+  }
+
+  .tinyScore {
+    grid-template-columns: 62px 1fr;
+    gap: 6px;
+  }
+
+  .tinyScore span {
+    font-size: 12px;
+  }
+
+  .scoreButtons {
+    gap: 3px;
+  }
+
+  .scoreButtons button {
+    height: 26px;
+    border-radius: 8px;
+    font-size: 11px;
+  }
+
+  .momentTabs button {
+    font-size: 9.5px;
+    padding: 8px 1px;
+  }
+
+  .photoMonthGrid {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 2px;
+  }
+
+  .photoMonthItem span {
+    left: 3px;
+    bottom: 3px;
+    min-width: 17px;
+    height: 17px;
+    font-size: 9px;
+  }
+
+  .viewerNav {
+    display: none;
+  }
+}
