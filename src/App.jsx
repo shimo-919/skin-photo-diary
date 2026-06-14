@@ -20,14 +20,19 @@ const PHOTO_TYPES = [
   { key: "left", label: "左" },
 ];
 
-const SCORE_ITEMS = [
-  { key: "dryness", label: "乾燥" },
-  { key: "redness", label: "赤み" },
-  { key: "itchiness", label: "かゆみ" },
-  { key: "roughness", label: "ざらつき" },
-  { key: "peeling", label: "皮むけ" },
-  { key: "tightness", label: "つっぱり" },
+const CHECK_ITEMS = [
+  { key: "sleepHours", label: "睡眠時間", type: "number", unit: "時間" },
+  { key: "morningWash", label: "朝洗顔", type: "check" },
+  { key: "sunscreen", label: "日焼け止め", type: "check" },
 ];
+
+const CONDITION_LABELS = {
+  1: "かなり悪い",
+  2: "悪い",
+  3: "普通",
+  4: "良い",
+  5: "かなり良い",
+};
 
 const WEEK_DAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -59,16 +64,13 @@ function createEmptyRecord(date) {
     date,
     photoMoment: "afterNightWash",
     photos: createEmptyPhotos(),
-    scores: {
-      dryness: 0,
-      redness: 0,
-      itchiness: 0,
-      roughness: 0,
-      peeling: 0,
-      tightness: 0,
+    conditionScore: 3,
+    checks: {
+      sleepHours: "",
+      morningWash: false,
+      sunscreen: false,
     },
     skinMemo: "",
-    previousDayMemo: "",
     updatedAt: new Date().toISOString(),
   };
 }
@@ -119,20 +121,25 @@ function normalizeRecord(raw, date) {
     photoMoment = nestedMoment.key;
   }
 
+  let conditionScore = raw.conditionScore;
+
+  if (!conditionScore && raw.scores) {
+    const values = Object.values(raw.scores).map(Number);
+    const avg = values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 3;
+    conditionScore = Math.max(1, Math.min(5, Math.round(6 - avg)));
+  }
+
   return {
     date: raw.date || date,
     photoMoment,
     photos: normalizePhotos(raw.photos, oldSlot),
-    scores: raw.scores || oldSlot?.scores || {
-      dryness: 0,
-      redness: 0,
-      itchiness: 0,
-      roughness: 0,
-      peeling: 0,
-      tightness: 0,
+    conditionScore: Number(conditionScore || 3),
+    checks: {
+      sleepHours: raw.checks?.sleepHours || "",
+      morningWash: Boolean(raw.checks?.morningWash),
+      sunscreen: Boolean(raw.checks?.sunscreen),
     },
     skinMemo: raw.skinMemo || oldSlot?.memo || "",
-    previousDayMemo: raw.previousDayMemo || "",
     updatedAt: raw.updatedAt || new Date().toISOString(),
   };
 }
@@ -305,24 +312,43 @@ function hasAnyPhoto(record) {
   return PHOTO_TYPES.some((type) => record.photos?.[type.key]);
 }
 
-function normalizeBulletMemo(value) {
-  if (!value) return value;
-  if (!value.startsWith("・")) return `・${value}`;
-  return value;
+function hasAnyContent(record) {
+  return (
+    hasAnyPhoto(record) ||
+    record.skinMemo ||
+    record.previousDayMemo ||
+    record.conditionScore ||
+    record.checks?.sleepHours ||
+    record.checks?.morningWash ||
+    record.checks?.sunscreen
+  );
+}
+
+
+
+function getDateDiff(fromDate, toDate) {
+  const from = new Date(`${fromDate}T00:00:00`);
+  const to = new Date(`${toDate}T00:00:00`);
+  return Math.round((to - from) / (1000 * 60 * 60 * 24));
 }
 
 function App() {
-  const [selectedDate, setSelectedDate] = useState(todayString());
-  const [currentMonth, setCurrentMonth] = useState(getMonthString(todayString()));
-  const [record, setRecord] = useState(createEmptyRecord(todayString()));
+    const [selectedDate, setSelectedDate] = useState(todayString());
+    const [currentMonth, setCurrentMonth] = useState(getMonthString(todayString()));
+    const [view, setView] = useState("record");
+    const [record, setRecord] = useState(createEmptyRecord(todayString()));
   const [allRecords, setAllRecords] = useState([]);
-  const [view, setView] = useState("record");
   const [compareType, setCompareType] = useState("front");
   const [compareMoment, setCompareMoment] = useState("all");
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [showCalendar, setShowCalendar] = useState(false);
   const [touchStartX, setTouchStartX] = useState(null);
   const [viewerChromeVisible, setViewerChromeVisible] = useState(true);
+  const [viewerZoom, setViewerZoom] = useState(1);
+  const [pageTouchStart, setPageTouchStart] = useState(null);
+  const [pageAnimation, setPageAnimation] = useState("");
+  const [cropTarget, setCropTarget] = useState(null);
+  const [cropSettings, setCropSettings] = useState({ zoom: 1.2, x: 0, y: 0 });
 
   const savedDateSet = useMemo(() => {
     return new Set(allRecords.map((item) => item.date));
@@ -347,18 +373,21 @@ function App() {
     return `${year}年${Number(month)}月`;
   }, [currentMonth]);
 
-  const previousMemoRows = useMemo(() => {
-    const lineCount = (record.previousDayMemo || "").split("\n").length;
-    return Math.max(5, lineCount + 1);
-  }, [record.previousDayMemo]);
+  const skinMemoRows = useMemo(() => {
+    const lineCount = (record.skinMemo || "").split("\n").length;
+    return Math.max(4, lineCount + 1);
+  }, [record.skinMemo]);
+
+
 
   const galleryPhotos = useMemo(() => {
-    return currentMonthRecords
+    return allRecords
       .filter((item) => {
         if (!item.photos?.[compareType]) return false;
         if (compareMoment === "all") return true;
         return item.photoMoment === compareMoment;
       })
+      .sort((a, b) => b.date.localeCompare(a.date))
       .map((item) => {
         const momentLabel = PHOTO_MOMENTS.find((m) => m.key === item.photoMoment)?.label;
         const typeLabel = PHOTO_TYPES.find((t) => t.key === compareType)?.label;
@@ -370,7 +399,39 @@ function App() {
           canDelete: false,
         };
       });
-  }, [currentMonthRecords, compareMoment, compareType]);
+  }, [allRecords, compareMoment, compareType]);
+
+  const monthSummaryStats = useMemo(() => {
+    const recordsWithSomething = currentMonthRecords.filter(hasAnyContent);
+
+    const conditionRecords = recordsWithSomething.filter((item) => item.conditionScore);
+    const avgCondition =
+      conditionRecords.length > 0
+        ? conditionRecords.reduce((sum, item) => sum + Number(item.conditionScore || 0), 0) /
+        conditionRecords.length
+        : 0;
+
+    const washCount = recordsWithSomething.filter((item) => item.checks?.morningWash).length;
+    const sunscreenCount = recordsWithSomething.filter((item) => item.checks?.sunscreen).length;
+
+    const sleepValues = recordsWithSomething
+      .map((item) => Number(item.checks?.sleepHours))
+      .filter((value) => value > 0);
+
+    const avgSleep =
+      sleepValues.length > 0
+        ? sleepValues.reduce((sum, value) => sum + value, 0) / sleepValues.length
+        : 0;
+
+    return {
+      totalDays: recordsWithSomething.length,
+      photoDays: recordsWithSomething.filter(hasAnyPhoto).length,
+      avgCondition,
+      avgSleep,
+      washCount,
+      sunscreenCount,
+    };
+  }, [currentMonthRecords]);
 
   useEffect(() => {
     loadRecord(selectedDate);
@@ -458,11 +519,13 @@ function App() {
   function openRecordPhoto(photoKey) {
     const { items, index } = getRecordPhotoItems(photoKey);
     setViewerChromeVisible(true);
+    setViewerZoom(1);
     setSelectedPhoto({ items, index, canDelete: true });
   }
 
   function openGalleryPhoto(index) {
     setViewerChromeVisible(true);
+    setViewerZoom(1);
     setSelectedPhoto({
       items: galleryPhotos,
       index,
@@ -511,6 +574,7 @@ function App() {
 
     const nextIndex = (selectedPhoto.index + diff + total) % total;
 
+    setViewerZoom(1);
     setSelectedPhoto({
       ...selectedPhoto,
       index: nextIndex,
@@ -545,12 +609,19 @@ function App() {
     });
   }
 
-  function updateScore(key, value) {
+  function updateConditionScore(value) {
     updateRecord({
       ...record,
-      scores: {
-        ...record.scores,
-        [key]: Number(value),
+      conditionScore: Number(value),
+    });
+  }
+
+  function updateCheck(key, value) {
+    updateRecord({
+      ...record,
+      checks: {
+        ...record.checks,
+        [key]: value,
       },
     });
   }
@@ -562,37 +633,7 @@ function App() {
     });
   }
 
-  function updatePreviousDayMemo(value) {
-    updateRecord({
-      ...record,
-      previousDayMemo: normalizeBulletMemo(value),
-    });
-  }
 
-  function handlePreviousMemoFocus() {
-    if (!record.previousDayMemo) {
-      updatePreviousDayMemo("・");
-    }
-  }
-
-  function handlePreviousMemoKeyDown(e) {
-    if (e.key !== "Enter") return;
-
-    const textarea = e.currentTarget;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const value = textarea.value;
-
-    e.preventDefault();
-
-    const nextValue = `${value.slice(0, start)}\n・${value.slice(end)}`;
-    updatePreviousDayMemo(nextValue);
-
-    requestAnimationFrame(() => {
-      textarea.selectionStart = start + 2;
-      textarea.selectionEnd = start + 2;
-    });
-  }
 
   async function removeDayRecord() {
     const ok = window.confirm(`${formatDateLabel(selectedDate)} の記録を全部削除する？`);
@@ -614,28 +655,126 @@ function App() {
     setCurrentMonth(nextMonth);
   }
 
-  function selectDate(date) {
-    if (!date) return;
-    setSelectedDate(date);
-    setCurrentMonth(getMonthString(date));
+  function moveToDate(nextDate) {
+    if (!nextDate) return;
+
+    const diff = getDateDiff(selectedDate, nextDate);
+    const shouldAnimate = Math.abs(diff) > 0 && Math.abs(diff) <= 31;
+
+    if (shouldAnimate) {
+      setPageAnimation(diff > 0 ? "slideNext" : "slidePrev");
+
+      window.setTimeout(() => {
+        setPageAnimation("");
+      }, 260);
+    }
+
+    setSelectedDate(nextDate);
+    setCurrentMonth(getMonthString(nextDate));
     setView("record");
   }
 
+  function selectDate(date) {
+    moveToDate(date);
+  }
+
   function goToday() {
-    const today = todayString();
-    setSelectedDate(today);
-    setCurrentMonth(getMonthString(today));
-    setView("record");
+    moveToDate(todayString());
   }
 
   function moveSelectedDate(diff) {
     const d = new Date(`${selectedDate}T00:00:00`);
     d.setDate(d.getDate() + diff);
 
-    const nextDate = toDateString(d);
-    setSelectedDate(nextDate);
-    setCurrentMonth(getMonthString(nextDate));
-    setView("record");
+    moveToDate(toDateString(d));
+  }
+
+  function handlePageTouchStart(e) {
+    const tagName = e.target.tagName;
+
+    if (["TEXTAREA", "INPUT", "BUTTON", "SELECT", "LABEL"].includes(tagName)) {
+      return;
+    }
+
+    setPageTouchStart({
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+    });
+  }
+
+  function handlePageTouchEnd(e) {
+    if (!pageTouchStart) return;
+
+    const endX = e.changedTouches[0].clientX;
+    const endY = e.changedTouches[0].clientY;
+
+    const diffX = endX - pageTouchStart.x;
+    const diffY = endY - pageTouchStart.y;
+
+    if (Math.abs(diffX) > 70 && Math.abs(diffX) > Math.abs(diffY) * 1.35) {
+      if (diffX < 0) {
+        moveSelectedDate(1);
+      } else {
+        moveSelectedDate(-1);
+      }
+    }
+
+    setPageTouchStart(null);
+  }
+
+  function openCrop(photoKey) {
+    setCropTarget(photoKey);
+    setCropSettings({ zoom: 1.2, x: 0, y: 0 });
+  }
+
+  function saveCroppedPhoto() {
+    if (!cropTarget) return;
+
+    const src = record.photos?.[cropTarget];
+    if (!src) return;
+
+    const img = new Image();
+
+    img.onload = async () => {
+      const size = 1000;
+      const canvas = document.createElement("canvas");
+
+      canvas.width = size;
+      canvas.height = size;
+
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, size, size);
+
+      const coverScale = Math.max(size / img.width, size / img.height);
+      const scale = coverScale * cropSettings.zoom;
+
+      const drawWidth = img.width * scale;
+      const drawHeight = img.height * scale;
+
+      const moveX = (cropSettings.x / 100) * size;
+      const moveY = (cropSettings.y / 100) * size;
+
+      const dx = (size - drawWidth) / 2 + moveX;
+      const dy = (size - drawHeight) / 2 + moveY;
+
+      ctx.drawImage(img, dx, dy, drawWidth, drawHeight);
+
+      const cropped = canvas.toDataURL("image/jpeg", 0.9);
+
+      const next = {
+        ...record,
+        photos: {
+          ...record.photos,
+          [cropTarget]: cropped,
+        },
+      };
+
+      await updateRecord(next);
+      setCropTarget(null);
+    };
+
+    img.src = src;
   }
 
   const currentModalPhoto = selectedPhoto?.items?.[selectedPhoto.index];
@@ -738,16 +877,14 @@ function App() {
         </section>
       )}
 
-      {view === "gallery" && (
-        <section className="monthBar">
-          <button onClick={() => changeMonth(-1)}>‹</button>
-          <strong>{monthTitle}</strong>
-          <button onClick={() => changeMonth(1)}>›</button>
-        </section>
-      )}
+
 
       {view === "record" && (
-        <>
+        <div
+          className={`recordSwipeArea ${pageAnimation}`}
+          onTouchStart={handlePageTouchStart}
+          onTouchEnd={handlePageTouchEnd}
+        >
           <section className="dateSummary">
             <div>
               {selectedDate === todayString() && <p>{formatDateLabel(selectedDate)}</p>}
@@ -784,9 +921,15 @@ function App() {
                 return (
                   <div className="photoSlot" key={photo.key}>
                     {image ? (
-                      <button className="photoThumb" onClick={() => openRecordPhoto(photo.key)}>
-                        <img src={image} alt={`${photo.label}の写真`} />
-                      </button>
+                      <div className="photoFilled">
+                        <button className="photoThumb" onClick={() => openRecordPhoto(photo.key)}>
+                          <img src={image} alt={`${photo.label}の写真`} />
+                        </button>
+
+                        <button className="cropButton" onClick={() => openCrop(photo.key)}>
+                          トリミング
+                        </button>
+                      </div>
                     ) : (
                       <label className="photoAdd">
                         <input
@@ -810,28 +953,65 @@ function App() {
 
           <section className="compactCard">
             <div className="cardHead">
-              <h3>肌感覚</h3>
-              <p>0〜5</p>
+              <h3>今日の肌の調子</h3>
+              <p>1〜5</p>
             </div>
 
-            <div className="tinyScores">
-              {SCORE_ITEMS.map((item) => (
-                <div className="tinyScore" key={item.key}>
-                  <span>{item.label}</span>
+            <div className="conditionBlock">
+              <div className="conditionButtons">
+                {[1, 2, 3, 4, 5].map((num) => (
+                  <button
+                    key={num}
+                    className={Number(record.conditionScore || 3) === num ? "on" : ""}
+                    onClick={() => updateConditionScore(num)}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
 
-                  <div className="scoreButtons">
-                    {[0, 1, 2, 3, 4, 5].map((num) => (
-                      <button
-                        key={num}
-                        className={Number(record.scores?.[item.key] ?? 0) === num ? "on" : ""}
-                        onClick={() => updateScore(item.key, num)}
-                      >
-                        {num}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
+              <p>{CONDITION_LABELS[record.conditionScore || 3]}</p>
+            </div>
+          </section>
+
+          <section className="compactCard">
+            <div className="cardHead">
+              <h3>チェック</h3>
+            </div>
+
+            <div className="checkList">
+              {CHECK_ITEMS.map((item) => {
+                if (item.type === "number") {
+                  return (
+                    <label className="sleepInputRow" key={item.key}>
+                      <span>{item.label}</span>
+                      <div>
+                        <input
+                          type="number"
+                          min="0"
+                          max="24"
+                          step="0.5"
+                          value={record.checks?.sleepHours || ""}
+                          onChange={(e) => updateCheck("sleepHours", e.target.value)}
+                          placeholder="7"
+                        />
+                        <small>{item.unit}</small>
+                      </div>
+                    </label>
+                  );
+                }
+
+                return (
+                  <label className="checkRow" key={item.key}>
+                    <span>{item.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(record.checks?.[item.key])}
+                      onChange={(e) => updateCheck(item.key, e.target.checked)}
+                    />
+                  </label>
+                );
+              })}
             </div>
           </section>
 
@@ -839,39 +1019,29 @@ function App() {
             <label>
               <span>{selectedDate === todayString() ? "今日の肌メモ" : "この日の肌メモ"}</span>
               <textarea
+                rows={skinMemoRows}
                 value={record.skinMemo || ""}
                 onChange={(e) => updateSkinMemo(e.target.value)}
                 placeholder="例：頬が粉吹いてる。口周りが乾燥。赤みは少ない。"
               />
             </label>
 
-            <label>
-              <span>前日にしたこと</span>
-              <textarea
-                className="bulletTextarea"
-                rows={previousMemoRows}
-                value={record.previousDayMemo || ""}
-                onFocus={handlePreviousMemoFocus}
-                onChange={(e) => updatePreviousDayMemo(e.target.value)}
-                onKeyDown={handlePreviousMemoKeyDown}
-                placeholder={"・睡眠6時間\n・筋トレした\n・甘いもの食べた\n・枕カバー交換"}
-              />
-            </label>
+
           </section>
 
           <button className="deleteDayButton subtle" onClick={removeDayRecord}>
             この日の記録を削除
           </button>
-        </>
+        </div>
       )}
 
       {view === "gallery" && (
         <section className="galleryPage">
           <div className="galleryHead">
             <div>
-              <h2>{monthTitle}の写真比較</h2>
+              <h2>写真一覧</h2>
             </div>
-            <span>{currentMonthRecords.filter(hasAnyPhoto).length}日分</span>
+            <span>{galleryPhotos.length}枚</span>
           </div>
 
           <div className="compareTabs">
@@ -919,13 +1089,14 @@ function App() {
         </section>
       )}
 
+
+
       <nav className="bottomNav">
         <button className={view === "record" ? "active" : ""} onClick={() => setView("record")}>
           記録
         </button>
-
         <button className={view === "gallery" ? "active" : ""} onClick={() => setView("gallery")}>
-          月写真
+          写真一覧
         </button>
       </nav>
 
@@ -965,8 +1136,19 @@ function App() {
               src={currentModalPhoto.src}
               alt="拡大写真"
               draggable="false"
+              style={{ transform: `scale(${viewerZoom})` }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setViewerZoom((prev) => (prev === 1 ? 2 : 1));
+              }}
             />
           </button>
+
+          <div className="viewerZoomTools" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setViewerZoom((prev) => Math.max(1, prev - 0.25))}>−</button>
+            <button onClick={() => setViewerZoom(1)}>等倍</button>
+            <button onClick={() => setViewerZoom((prev) => Math.min(3, prev + 0.25))}>＋</button>
+          </div>
 
           <button
             className="viewerNav left"
@@ -993,6 +1175,81 @@ function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <p>{currentModalPhoto.title}</p>
+          </div>
+        </div>
+      )}
+
+      {cropTarget && record.photos?.[cropTarget] && (
+        <div className="cropModal">
+          <div className="cropTop">
+            <button onClick={() => setCropTarget(null)}>キャンセル</button>
+            <strong>トリミング</strong>
+            <button onClick={saveCroppedPhoto}>保存</button>
+          </div>
+
+          <div className="cropStage">
+            <div className="cropFrame">
+              <img
+                src={record.photos[cropTarget]}
+                alt="トリミング中"
+                style={{
+                  transform: `translate(${cropSettings.x}%, ${cropSettings.y}%) scale(${cropSettings.zoom})`,
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="cropControls">
+            <label>
+              <span>拡大</span>
+              <input
+                type="range"
+                min="1"
+                max="3"
+                step="0.05"
+                value={cropSettings.zoom}
+                onChange={(e) =>
+                  setCropSettings((prev) => ({
+                    ...prev,
+                    zoom: Number(e.target.value),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              <span>左右</span>
+              <input
+                type="range"
+                min="-40"
+                max="40"
+                step="1"
+                value={cropSettings.x}
+                onChange={(e) =>
+                  setCropSettings((prev) => ({
+                    ...prev,
+                    x: Number(e.target.value),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              <span>上下</span>
+              <input
+                type="range"
+                min="-40"
+                max="40"
+                step="1"
+                value={cropSettings.y}
+                onChange={(e) =>
+                  setCropSettings((prev) => ({
+                    ...prev,
+                    y: Number(e.target.value),
+                  }))
+                }
+              />
+            </label>
           </div>
         </div>
       )}
