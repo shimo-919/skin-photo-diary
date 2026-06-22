@@ -1,16 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import "./index.css";
 
 const DB_NAME = "skin-photo-diary-db";
-const DB_VERSION = 5;
+const DB_VERSION = 7;
 const STORE_NAME = "skinRecords";
 
-const PHOTO_MOMENTS = [
-  { key: "morning", label: "朝" },
-  { key: "afterMorningWash", label: "朝洗顔後" },
-  { key: "night", label: "夜" },
-  { key: "afterNightWash", label: "夜洗顔後" },
-];
+const PHOTO_MOMENTS = [{ key: "afterNightWash", label: "夜洗顔後" }];
 
 const COMPARE_MOMENTS = [{ key: "all", label: "すべて" }, ...PHOTO_MOMENTS];
 
@@ -65,11 +60,7 @@ function createEmptyRecord(date) {
     photoMoment: "afterNightWash",
     photos: createEmptyPhotos(),
     conditionScore: 3,
-    checks: {
-      sleepHours: "",
-      morningWash: false,
-      sunscreen: false,
-    },
+    checks: { sleepStart: "", sleepEnd: "", wakeupSkinGood: false, medicineApplied: false, morningWash: false, sunscreen: false, betterThanYesterday: false },
     skinMemo: "",
     updatedAt: new Date().toISOString(),
   };
@@ -134,11 +125,7 @@ function normalizeRecord(raw, date) {
     photoMoment,
     photos: normalizePhotos(raw.photos, oldSlot),
     conditionScore: Number(conditionScore || 3),
-    checks: {
-      sleepHours: raw.checks?.sleepHours || "",
-      morningWash: Boolean(raw.checks?.morningWash),
-      sunscreen: Boolean(raw.checks?.sunscreen),
-    },
+    checks: { sleepStart: raw.checks?.sleepStart || "", sleepEnd: raw.checks?.sleepEnd || "", wakeupSkinGood: Boolean(raw.checks?.wakeupSkinGood), medicineApplied: Boolean(raw.checks?.medicineApplied), morningWash: Boolean(raw.checks?.morningWash), sunscreen: Boolean(raw.checks?.sunscreen), betterThanYesterday: Boolean(raw.checks?.betterThanYesterday) },
     skinMemo: raw.skinMemo || oldSlot?.memo || "",
     updatedAt: raw.updatedAt || new Date().toISOString(),
   };
@@ -336,6 +323,7 @@ function App() {
     const [selectedDate, setSelectedDate] = useState(todayString());
     const [currentMonth, setCurrentMonth] = useState(getMonthString(todayString()));
     const [view, setView] = useState("record");
+  const [freeMemo, setFreeMemo] = useState(() => localStorage.getItem("skin-free-memo") || "");
     const [record, setRecord] = useState(createEmptyRecord(todayString()));
   const [allRecords, setAllRecords] = useState([]);
   const [compareType, setCompareType] = useState("front");
@@ -345,10 +333,18 @@ function App() {
   const [touchStartX, setTouchStartX] = useState(null);
   const [viewerChromeVisible, setViewerChromeVisible] = useState(true);
   const [viewerZoom, setViewerZoom] = useState(1);
+  const [viewerPosition, setViewerPosition] = useState({ x: 0, y: 0 });
   const [pageTouchStart, setPageTouchStart] = useState(null);
   const [pageAnimation, setPageAnimation] = useState("");
   const [cropTarget, setCropTarget] = useState(null);
   const [cropSettings, setCropSettings] = useState({ zoom: 1.2, x: 0, y: 0 });
+  const activeDateRef = useRef(selectedDate);
+  const cropDragRef = useRef(null);
+  const cropPointersRef = useRef(new Map());
+  const cropPinchRef = useRef(null);
+  const viewerPointersRef = useRef(new Map());
+  const viewerPinchRef = useRef(null);
+  const viewerDragRef = useRef(null);
 
   const savedDateSet = useMemo(() => {
     return new Set(allRecords.map((item) => item.date));
@@ -400,6 +396,15 @@ function App() {
         };
       });
   }, [allRecords, compareMoment, compareType]);
+  const galleryPhotosByMonth = useMemo(() => {
+    const groups = new Map();
+    galleryPhotos.forEach((photo) => {
+      const month = photo.date.slice(0, 7);
+      if (!groups.has(month)) groups.set(month, []);
+      groups.get(month).push(photo);
+    });
+    return [...groups.entries()];
+  }, [galleryPhotos]);
 
   const monthSummaryStats = useMemo(() => {
     const recordsWithSomething = currentMonthRecords.filter(hasAnyContent);
@@ -434,6 +439,7 @@ function App() {
   }, [currentMonthRecords]);
 
   useEffect(() => {
+    activeDateRef.current = selectedDate;
     loadRecord(selectedDate);
   }, [selectedDate]);
 
@@ -453,7 +459,7 @@ function App() {
   async function loadRecord(date) {
     try {
       const saved = await getRecord(date);
-      setRecord(saved);
+      if (activeDateRef.current === date) setRecord(saved);
     } catch (error) {
       console.error(error);
     }
@@ -469,7 +475,7 @@ function App() {
   }
 
   async function updateRecord(nextRecord) {
-    setRecord(nextRecord);
+    if (activeDateRef.current === nextRecord.date) setRecord(nextRecord);
 
     try {
       await saveRecord(nextRecord);
@@ -483,12 +489,14 @@ function App() {
     if (!file) return;
 
     try {
-      const imageData = await compressImage(file);
-
+      const imageData = await compressImage(file);      const targetDate = selectedDate;
+      const targetRecord = await getRecord(targetDate);
       const next = {
-        ...record,
+        ...targetRecord,
+        date: targetDate,
+        photoMoment: "afterNightWash",
         photos: {
-          ...record.photos,
+          ...targetRecord.photos,
           [photoKey]: imageData,
         },
       };
@@ -520,12 +528,14 @@ function App() {
     const { items, index } = getRecordPhotoItems(photoKey);
     setViewerChromeVisible(true);
     setViewerZoom(1);
+    setViewerPosition({ x: 0, y: 0 });
     setSelectedPhoto({ items, index, canDelete: true });
   }
 
   function openGalleryPhoto(index) {
     setViewerChromeVisible(true);
     setViewerZoom(1);
+    setViewerPosition({ x: 0, y: 0 });
     setSelectedPhoto({
       items: galleryPhotos,
       index,
@@ -575,6 +585,7 @@ function App() {
     const nextIndex = (selectedPhoto.index + diff + total) % total;
 
     setViewerZoom(1);
+    setViewerPosition({ x: 0, y: 0 });
     setSelectedPhoto({
       ...selectedPhoto,
       index: nextIndex,
@@ -630,6 +641,13 @@ function App() {
     updateRecord({
       ...record,
       skinMemo: value,
+    });
+  }
+
+  function updateFoodMemo(value) {
+    updateRecord({
+      ...record,
+      foodMemo: value,
     });
   }
 
@@ -721,6 +739,45 @@ function App() {
 
     setPageTouchStart(null);
   }
+  function startViewerPinch(event) {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const pointers = viewerPointersRef.current;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 1 && viewerZoom > 1) {
+      viewerDragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, position: viewerPosition };
+    }
+    if (pointers.size === 2) {
+      const [first, second] = [...pointers.values()];
+      const rect = event.currentTarget.getBoundingClientRect();
+      viewerPinchRef.current = { distance: Math.hypot(second.x - first.x, second.y - first.y), zoom: viewerZoom, position: viewerPosition, centerX: (first.x + second.x) / 2 - rect.left - rect.width / 2, centerY: (first.y + second.y) / 2 - rect.top - rect.height / 2 };
+      viewerDragRef.current = null;
+    }
+  }
+
+  function moveViewerPinch(event) {
+    const pointers = viewerPointersRef.current;
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 2 && viewerPinchRef.current) {
+      const [first, second] = [...pointers.values()];
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      const pinch = viewerPinchRef.current;
+      const zoom = Math.max(1, Math.min(4, pinch.zoom * Math.pow(distance / pinch.distance, 1.45)));
+      const ratio = zoom / pinch.zoom;
+      setViewerZoom(zoom);
+      setViewerPosition({ x: pinch.position.x - pinch.centerX * (ratio - 1), y: pinch.position.y - pinch.centerY * (ratio - 1) });
+      return;
+    }
+    const drag = viewerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setViewerPosition({ x: drag.position.x + event.clientX - drag.x, y: drag.position.y + event.clientY - drag.y });
+  }
+
+  function endViewerPinch(event) {
+    viewerPointersRef.current.delete(event.pointerId);
+    viewerPinchRef.current = null;
+    viewerDragRef.current = null;
+  }
 
   function openCrop(photoKey) {
     setCropTarget(photoKey);
@@ -775,6 +832,53 @@ function App() {
     };
 
     img.src = src;
+  }
+  function startCropDrag(event) {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const pointers = cropPointersRef.current;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size === 1) {
+      cropDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: cropSettings.x, y: cropSettings.y };
+    }
+
+    if (pointers.size === 2) {
+      const [first, second] = [...pointers.values()];
+      cropPinchRef.current = { distance: Math.hypot(second.x - first.x, second.y - first.y), zoom: cropSettings.zoom };
+      cropDragRef.current = null;
+    }
+  }
+
+  function moveCropDrag(event) {
+    const pointers = cropPointersRef.current;
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size === 2 && cropPinchRef.current) {
+      const [first, second] = [...pointers.values()];
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      const zoom = Math.max(1, Math.min(3, cropPinchRef.current.zoom * (distance / cropPinchRef.current.distance)));
+      setCropSettings((prev) => ({ ...prev, zoom }));
+      return;
+    }
+
+    const drag = cropDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(-40, Math.min(40, drag.x + ((event.clientX - drag.startX) / rect.width) * 100));
+    const y = Math.max(-40, Math.min(40, drag.y + ((event.clientY - drag.startY) / rect.height) * 100));
+    setCropSettings((prev) => ({ ...prev, x, y }));
+  }
+
+  function endCropDrag(event) {
+    const pointers = cropPointersRef.current;
+    pointers.delete(event.pointerId);
+    cropPinchRef.current = null;
+    cropDragRef.current = null;
+    if (pointers.size === 1) {
+      const [pointerId, point] = [...pointers.entries()][0];
+      cropDragRef.current = { pointerId, startX: point.x, startY: point.y, x: cropSettings.x, y: cropSettings.y };
+    }
   }
 
   const currentModalPhoto = selectedPhoto?.items?.[selectedPhoto.index];
@@ -900,18 +1004,7 @@ function App() {
           <section className="photoDiaryCard">
             <div className="cardHead simple">
               <h3>写真</h3>
-            </div>
-
-            <div className="photoMomentTabs">
-              {PHOTO_MOMENTS.map((moment) => (
-                <button
-                  key={moment.key}
-                  className={(record.photoMoment || "afterNightWash") === moment.key ? "active" : ""}
-                  onClick={() => updatePhotoMoment(moment.key)}
-                >
-                  {moment.label}
-                </button>
-              ))}
+              <p>夜洗顔後</p>
             </div>
 
             <div className="singlePhotoRow">
@@ -980,40 +1073,9 @@ function App() {
             </div>
 
             <div className="checkList">
-              {CHECK_ITEMS.map((item) => {
-                if (item.type === "number") {
-                  return (
-                    <label className="sleepInputRow" key={item.key}>
-                      <span>{item.label}</span>
-                      <div>
-                        <input
-                          type="number"
-                          min="0"
-                          max="24"
-                          step="0.5"
-                          value={record.checks?.sleepHours || ""}
-                          onChange={(e) => updateCheck("sleepHours", e.target.value)}
-                          placeholder="7"
-                        />
-                        <small>{item.unit}</small>
-                      </div>
-                    </label>
-                  );
-                }
-
-                return (
-                  <label className="checkRow" key={item.key}>
-                    <span>{item.label}</span>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(record.checks?.[item.key])}
-                      onChange={(e) => updateCheck(item.key, e.target.checked)}
-                    />
-                  </label>
-                );
-              })}
-            </div>
-          </section>
+              <label className="sleepInputRow"><span>睡眠時間</span><div className="sleepTimeInputs"><input type="text" inputMode="numeric" maxLength="2" placeholder="23" value={record.checks?.sleepStart || ""} onChange={(e) => updateCheck("sleepStart", e.target.value)} /><small>時</small><b>〜</b><input type="text" inputMode="numeric" maxLength="2" placeholder="7" value={record.checks?.sleepEnd || ""} onChange={(e) => updateCheck("sleepEnd", e.target.value)} /><small>時</small></div></label>
+              {[["wakeupSkinGood", "起床後の肌の調子が良い"], ["medicineApplied", "薬を塗った"], ["morningWash", "朝洗顔をした"], ["sunscreen", "日焼け止めを塗った"], ["betterThanYesterday", "前日と比べて肌の調子が良い"]].map(([key, label]) => <label className="checkRow" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(record.checks?.[key])} onChange={(e) => updateCheck(key, e.target.checked)} /></label>)}
+            </div></section>
 
           <section className="memoCard">
             <label>
@@ -1023,6 +1085,15 @@ function App() {
                 value={record.skinMemo || ""}
                 onChange={(e) => updateSkinMemo(e.target.value)}
                 placeholder="例：頬が粉吹いてる。口周りが乾燥。赤みは少ない。"
+              />
+            </label>
+            <label>
+              <span>今日食べた食べ物</span>
+              <textarea
+                rows="3"
+                value={record.foodMemo || ""}
+                onChange={(e) => updateFoodMemo(e.target.value)}
+                placeholder="例：ごはん、味噌汁、チョコ、コーヒー"
               />
             </label>
 
@@ -1056,33 +1127,27 @@ function App() {
             ))}
           </div>
 
-          <div className="momentTabs">
-            {COMPARE_MOMENTS.map((moment) => (
-              <button
-                key={moment.key}
-                className={compareMoment === moment.key ? "active" : ""}
-                onClick={() => setCompareMoment(moment.key)}
-              >
-                {moment.label}
-              </button>
-            ))}
-          </div>
-
           {galleryPhotos.length === 0 ? (
             <div className="emptyGallery">
               <p>この条件の写真はまだありません。</p>
             </div>
           ) : (
-            <div className="photoMonthGrid">
-              {galleryPhotos.map((item, index) => (
-                <button
-                  className="photoMonthItem"
-                  key={`${item.date}-${compareMoment}-${compareType}-${index}`}
-                  onClick={() => openGalleryPhoto(index)}
-                >
-                  <img src={item.src} alt={`${item.date}の写真`} />
-                  <span>{Number(item.date.slice(-2))}</span>
-                </button>
+            <div className="monthPhotoGroups">
+              {galleryPhotosByMonth.map(([month, photos]) => (
+                <section className="monthPhotoGroup" key={month}>
+                  <h3>{month.replace("-", "年")}月</h3>
+                  <div className="photoMonthGrid">
+                    {photos.map((item) => {
+                      const index = galleryPhotos.indexOf(item);
+                      return (
+                        <button className="photoMonthItem" key={`${item.date}-${index}`} onClick={() => openGalleryPhoto(index)}>
+                          <img src={item.src} alt={`${item.date}の写真`} />
+                          <span>{Number(item.date.slice(-2))}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
               ))}
             </div>
           )}
@@ -1092,13 +1157,19 @@ function App() {
 
 
       <nav className="bottomNav">
-        <button className={view === "record" ? "active" : ""} onClick={() => setView("record")}>
-          記録
-        </button>
-        <button className={view === "gallery" ? "active" : ""} onClick={() => setView("gallery")}>
-          写真一覧
-        </button>
+        <button className={view === "record" ? "active" : ""} onClick={() => setView("record")}>記録</button>
+        <button className={view === "gallery" ? "active" : ""} onClick={() => setView("gallery")}>写真一覧</button>
+        <button className={view === "memo" ? "active" : ""} onClick={() => setView("memo")}>メモ</button>
       </nav>
+      {view === "memo" && (
+        <section className="freeMemoPage">
+          <div className="galleryHead"><div><h2>メモ</h2></div></div>
+          <section className="freeMemoCard">
+            <textarea value={freeMemo} onChange={(e) => { const value = e.target.value; setFreeMemo(value); localStorage.setItem("skin-free-memo", value); }} placeholder="例：買いたいスキンケア、皮膚科で聞きたいこと、肌の変化など" />
+            <small>入力内容はこの端末に自動保存されます</small>
+          </section>
+        </section>
+      )}
 
       {selectedPhoto && currentModalPhoto && (
         <div
@@ -1110,8 +1181,8 @@ function App() {
             className={`viewerTop ${viewerChromeVisible ? "" : "hidden"}`}
             onClick={(e) => e.stopPropagation()}
           >
-            <button className="viewerClose" onClick={() => setSelectedPhoto(null)}>
-              戻る
+            <button className="viewerClose" aria-label="閉じる" onClick={() => setSelectedPhoto(null)}>
+              ‹
             </button>
 
             <div className="viewerCount">
@@ -1119,8 +1190,8 @@ function App() {
             </div>
 
             {selectedPhoto.canDelete ? (
-              <button className="viewerTrash" onClick={removePhotoFromModal}>
-                削除
+              <button className="viewerTrash" aria-label="この写真を削除" onClick={removePhotoFromModal}>
+                🗑
               </button>
             ) : (
               <span />
@@ -1129,6 +1200,10 @@ function App() {
 
           <button
             className="viewerTapArea"
+            onPointerDown={startViewerPinch}
+            onPointerMove={moveViewerPinch}
+            onPointerUp={endViewerPinch}
+            onPointerCancel={endViewerPinch}
             onClick={() => setViewerChromeVisible((prev) => !prev)}
           >
             <img
@@ -1136,17 +1211,18 @@ function App() {
               src={currentModalPhoto.src}
               alt="拡大写真"
               draggable="false"
-              style={{ transform: `scale(${viewerZoom})` }}
+              style={{ transform: `translate(${viewerPosition.x}px, ${viewerPosition.y}px) scale(${viewerZoom})` }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 setViewerZoom((prev) => (prev === 1 ? 2 : 1));
+                setViewerPosition({ x: 0, y: 0 });
               }}
             />
           </button>
 
           <div className="viewerZoomTools" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setViewerZoom((prev) => Math.max(1, prev - 0.25))}>−</button>
-            <button onClick={() => setViewerZoom(1)}>等倍</button>
+            <button onClick={() => { setViewerZoom(1); setViewerPosition({ x: 0, y: 0 }); }}>等倍</button>
             <button onClick={() => setViewerZoom((prev) => Math.min(3, prev + 0.25))}>＋</button>
           </div>
 
@@ -1188,7 +1264,7 @@ function App() {
           </div>
 
           <div className="cropStage">
-            <div className="cropFrame">
+            <div className="cropFrame" onPointerDown={startCropDrag} onPointerMove={moveCropDrag} onPointerUp={endCropDrag} onPointerCancel={endCropDrag}>
               <img
                 src={record.photos[cropTarget]}
                 alt="トリミング中"
@@ -1200,56 +1276,14 @@ function App() {
           </div>
 
           <div className="cropControls">
-            <label>
-              <span>拡大</span>
-              <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.05"
-                value={cropSettings.zoom}
-                onChange={(e) =>
-                  setCropSettings((prev) => ({
-                    ...prev,
-                    zoom: Number(e.target.value),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              <span>左右</span>
-              <input
-                type="range"
-                min="-40"
-                max="40"
-                step="1"
-                value={cropSettings.x}
-                onChange={(e) =>
-                  setCropSettings((prev) => ({
-                    ...prev,
-                    x: Number(e.target.value),
-                  }))
-                }
-              />
-            </label>
-
-            <label>
-              <span>上下</span>
-              <input
-                type="range"
-                min="-40"
-                max="40"
-                step="1"
-                value={cropSettings.y}
-                onChange={(e) =>
-                  setCropSettings((prev) => ({
-                    ...prev,
-                    y: Number(e.target.value),
-                  }))
-                }
-              />
-            </label>
+            <p className="cropHint">写真を拡大して、矢印で位置を合わせます</p>
+            <div className="cropZoomRow">
+              <span>ズーム</span>
+              <button aria-label="縮小" onClick={() => setCropSettings((prev) => ({ ...prev, zoom: Math.max(1, Number((prev.zoom - 0.1).toFixed(2)))}))}>−</button>
+              <input type="range" min="1" max="3" step="0.05" value={cropSettings.zoom} onChange={(e) => setCropSettings((prev) => ({ ...prev, zoom: Number(e.target.value) }))} />
+              <button aria-label="拡大" onClick={() => setCropSettings((prev) => ({ ...prev, zoom: Math.min(3, Number((prev.zoom + 0.1).toFixed(2)))}))}>＋</button>
+            </div>
+            <p className="cropDragHint">写真は指1本で移動・指2本で拡大縮小できます</p>
           </div>
         </div>
       )}
@@ -1258,3 +1292,17 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
