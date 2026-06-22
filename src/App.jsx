@@ -324,6 +324,7 @@ function App() {
     const [currentMonth, setCurrentMonth] = useState(getMonthString(todayString()));
     const [view, setView] = useState("record");
   const [freeMemo, setFreeMemo] = useState(() => localStorage.getItem("skin-free-memo") || "");
+  const [memoPhoto, setMemoPhoto] = useState(() => localStorage.getItem("skin-free-memo-photo") || "");
     const [record, setRecord] = useState(createEmptyRecord(todayString()));
   const [allRecords, setAllRecords] = useState([]);
   const [compareType, setCompareType] = useState("front");
@@ -635,6 +636,17 @@ function App() {
         [key]: value,
       },
     });
+  }
+  async function handleMemoPhotoChange(file) {
+    if (!file) return;
+    try {
+      const photo = await compressImage(file, 1000, 0.75);
+      setMemoPhoto(photo);
+      localStorage.setItem("skin-free-memo-photo", photo);
+    } catch (error) {
+      console.error(error);
+      alert("写真の保存に失敗しました");
+    }
   }
 
   function updateSkinMemo(value) {
@@ -1165,7 +1177,9 @@ function App() {
         <section className="freeMemoPage">
           <div className="galleryHead"><div><h2>メモ</h2></div></div>
           <section className="freeMemoCard">
-            <textarea value={freeMemo} onChange={(e) => { const value = e.target.value; setFreeMemo(value); localStorage.setItem("skin-free-memo", value); }} placeholder="例：買いたいスキンケア、皮膚科で聞きたいこと、肌の変化など" />
+            <textarea value={freeMemo} onChange={(e) => { const value = e.target.value; setFreeMemo(value); localStorage.setItem("skin-free-memo", value); }} placeholder="例：目指したい肌、参考にしたいこと、買いたいスキンケアなど" />
+            <div className="memoPhotoHead"><span>理想の肌・参考写真</span>{memoPhoto && <button onClick={() => { setMemoPhoto(""); localStorage.removeItem("skin-free-memo-photo"); }}>削除</button>}</div>
+            {memoPhoto ? <img className="memoPhoto" src={memoPhoto} alt="理想の肌の参考写真" /> : <label className="memoPhotoAdd"><input type="file" accept="image/*" onChange={(e) => { handleMemoPhotoChange(e.target.files?.[0]); e.target.value = ""; }} /><b>＋</b><span>写真を追加</span></label>}
             <small>入力内容はこの端末に自動保存されます</small>
           </section>
         </section>
@@ -1292,6 +1306,8 @@ function App() {
 }
 
 export default App;
+
+
 
 
 
