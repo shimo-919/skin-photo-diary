@@ -1467,3 +1467,9 @@ button {
 .memoPhotoAdd input { display: none; }
 .memoPhotoAdd b { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 999px; background: #f2f2f7; font-size: 28px; font-weight: 300; }
 .memoPhotoAdd span { color: var(--muted); font-size: 12px; font-weight: 800; }
+
+.memoPhotoGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.memoPhotoItem { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 16px; background: #f2f2f7; }
+.memoPhotoItem .memoPhoto { width: 100%; height: 100%; max-height: none; object-fit: cover; border-radius: 0; }
+.memoPhotoItem button { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border: none; border-radius: 999px; color: white; background: rgba(0,0,0,.56); font-size: 20px; line-height: 1; cursor: pointer; }
+.memoPhotoGrid .memoPhotoAdd { min-height: 0; aspect-ratio: 1; }

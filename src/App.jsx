@@ -324,7 +324,14 @@ function App() {
     const [currentMonth, setCurrentMonth] = useState(getMonthString(todayString()));
     const [view, setView] = useState("record");
   const [freeMemo, setFreeMemo] = useState(() => localStorage.getItem("skin-free-memo") || "");
-  const [memoPhoto, setMemoPhoto] = useState(() => localStorage.getItem("skin-free-memo-photo") || "");
+  const [memoPhotos, setMemoPhotos] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("skin-free-memo-photos") || "[]");
+      if (Array.isArray(saved)) return saved;
+    } catch { /* 以前の保存形式も読み込む */ }
+    const oldPhoto = localStorage.getItem("skin-free-memo-photo");
+    return oldPhoto ? [oldPhoto] : [];
+  });
     const [record, setRecord] = useState(createEmptyRecord(todayString()));
   const [allRecords, setAllRecords] = useState([]);
   const [compareType, setCompareType] = useState("front");
@@ -641,12 +648,23 @@ function App() {
     if (!file) return;
     try {
       const photo = await compressImage(file, 1000, 0.75);
-      setMemoPhoto(photo);
-      localStorage.setItem("skin-free-memo-photo", photo);
+      setMemoPhotos((current) => {
+        const next = [...current, photo];
+        localStorage.setItem("skin-free-memo-photos", JSON.stringify(next));
+        return next;
+      });
     } catch (error) {
       console.error(error);
       alert("写真の保存に失敗しました");
     }
+  }
+
+  function removeMemoPhoto(index) {
+    setMemoPhotos((current) => {
+      const next = current.filter((_, photoIndex) => photoIndex !== index);
+      localStorage.setItem("skin-free-memo-photos", JSON.stringify(next));
+      return next;
+    });
   }
 
   function updateSkinMemo(value) {
@@ -1178,8 +1196,11 @@ function App() {
           <div className="galleryHead"><div><h2>メモ</h2></div></div>
           <section className="freeMemoCard">
             <textarea value={freeMemo} onChange={(e) => { const value = e.target.value; setFreeMemo(value); localStorage.setItem("skin-free-memo", value); }} placeholder="例：目指したい肌、参考にしたいこと、買いたいスキンケアなど" />
-            <div className="memoPhotoHead"><span>理想の肌・参考写真</span>{memoPhoto && <button onClick={() => { setMemoPhoto(""); localStorage.removeItem("skin-free-memo-photo"); }}>削除</button>}</div>
-            {memoPhoto ? <img className="memoPhoto" src={memoPhoto} alt="理想の肌の参考写真" /> : <label className="memoPhotoAdd"><input type="file" accept="image/*" onChange={(e) => { handleMemoPhotoChange(e.target.files?.[0]); e.target.value = ""; }} /><b>＋</b><span>写真を追加</span></label>}
+            <div className="memoPhotoHead"><span>理想の肌・参考写真</span></div>
+            <div className="memoPhotoGrid">
+              {memoPhotos.map((photo, index) => <div className="memoPhotoItem" key={`${photo.slice(0, 24)}-${index}`}><img className="memoPhoto" src={photo} alt={`理想の肌の参考写真 ${index + 1}`} /><button aria-label="写真を削除" onClick={() => removeMemoPhoto(index)}>×</button></div>)}
+              <label className="memoPhotoAdd"><input type="file" accept="image/*" onChange={(e) => { handleMemoPhotoChange(e.target.files?.[0]); e.target.value = ""; }} /><b>＋</b><span>写真を追加</span></label>
+            </div>
             <small>入力内容はこの端末に自動保存されます</small>
           </section>
         </section>
@@ -1306,6 +1327,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
