@@ -324,12 +324,12 @@ function sleepAxisToHour(axis) {
 }
 
 function formatSleepTime(hour) {
-  return `${Math.floor(hour) % 24}:${hour % 1 ? "30" : "00"}`;
+  return `${Math.floor(hour) % 24}時${hour % 1 ? "半" : ""}`;
 }
 
 function formatSleepDuration(hours) {
   const whole = Math.floor(hours);
-  return hours % 1 ? `${whole}時間30分` : `${whole}時間`;
+  return hours % 1 ? `${whole}時間半` : `${whole}時間`;
 }
 
 function SleepRangeBar({ start, end, onChange }) {
@@ -351,14 +351,14 @@ function SleepRangeBar({ start, end, onChange }) {
   function axisFromEvent(event) {
     const rect = trackRef.current.getBoundingClientRect();
     const ratio = clampValue((event.clientX - rect.left) / rect.width, 0, 1);
-    return Math.round(ratio * 24 * 2) / 2;
+    return Math.round(ratio * 24);
   }
 
   function moveHandle(which, axis, current) {
     if (which === "start") {
-      return { ...current, start: clampValue(axis, 0, current.end - 0.5) };
+      return { ...current, start: clampValue(axis, 0, current.end - 1) };
     }
-    return { ...current, end: clampValue(axis, current.start + 0.5, 23.5) };
+    return { ...current, end: clampValue(axis, current.start + 1, 23) };
   }
 
   function handlePointerDown(event) {
@@ -413,12 +413,8 @@ function SleepRangeBar({ start, end, onChange }) {
             className="sleepBarFill"
             style={{ left: `${(shown.start / 24) * 100}%`, width: `${(duration / 24) * 100}%` }}
           />
-          <span className="sleepHandle" style={{ left: `${(shown.start / 24) * 100}%` }}>
-            <i>🌙</i>
-          </span>
-          <span className="sleepHandle" style={{ left: `${(shown.end / 24) * 100}%` }}>
-            <i>☀️</i>
-          </span>
+          <span className="sleepHandle" style={{ left: `${(shown.start / 24) * 100}%` }} />
+          <span className="sleepHandle" style={{ left: `${(shown.end / 24) * 100}%` }} />
         </div>
       </div>
 
@@ -822,6 +818,268 @@ function PhotoViewer({ items, index, canDelete, onIndexChange, onClose, onDelete
   );
 }
 
+const CROP_MAX_ZOOM = 4;
+
+function CropModal({ src, onCancel, onSave }) {
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [animated, setAnimated] = useState(false);
+  const [imageSize, setImageSize] = useState(null);
+  const [frameSize, setFrameSize] = useState(0);
+  const [saving, setSaving] = useState(false);
+
+  const frameRef = useRef(null);
+  const pointersRef = useRef(new Map());
+  const gestureRef = useRef(null);
+  const zoomRef = useRef(1);
+  const offsetRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const image = new Image();
+    image.onload = () => setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+    image.src = src;
+  }, [src]);
+
+  useEffect(() => {
+    function measure() {
+      if (frameRef.current) setFrameSize(frameRef.current.clientWidth);
+    }
+
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  /* 枠を必ず覆うサイズ（cover）を基準に拡大・移動する */
+  const cover = useMemo(() => {
+    if (!imageSize || !frameSize) return null;
+    const scale = Math.max(frameSize / imageSize.width, frameSize / imageSize.height);
+    return { width: imageSize.width * scale, height: imageSize.height * scale };
+  }, [imageSize, frameSize]);
+
+  function applyTransform(nextZoom, nextOffset) {
+    zoomRef.current = nextZoom;
+    offsetRef.current = nextOffset;
+    setZoom(nextZoom);
+    setOffset(nextOffset);
+  }
+
+  function clampOffset(target, targetZoom, soft = false) {
+    if (!cover) return target;
+    const maxX = (cover.width * targetZoom - frameSize) / 2;
+    const maxY = (cover.height * targetZoom - frameSize) / 2;
+
+    const clampAxis = (value, max) => {
+      if (!soft) return clampValue(value, -max, max);
+      if (value > max) return max + (value - max) / 3;
+      if (value < -max) return -max + (value + max) / 3;
+      return value;
+    };
+
+    return { x: clampAxis(target.x, maxX), y: clampAxis(target.y, maxY) };
+  }
+
+  function frameCenterPoint(clientX, clientY) {
+    const rect = frameRef.current.getBoundingClientRect();
+    return { x: clientX - rect.left - rect.width / 2, y: clientY - rect.top - rect.height / 2 };
+  }
+
+  function handlePointerDown(event) {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const pointers = pointersRef.current;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    setAnimated(false);
+
+    if (pointers.size === 1) {
+      gestureRef.current = {
+        mode: "pan",
+        startX: event.clientX,
+        startY: event.clientY,
+        startOffset: offsetRef.current,
+      };
+      return;
+    }
+
+    if (pointers.size === 2) {
+      const [first, second] = [...pointers.values()];
+      gestureRef.current = {
+        mode: "pinch",
+        startZoom: zoomRef.current,
+        startOffset: offsetRef.current,
+        startDistance: Math.hypot(second.x - first.x, second.y - first.y),
+        center: frameCenterPoint((first.x + second.x) / 2, (first.y + second.y) / 2),
+      };
+    }
+  }
+
+  function handlePointerMove(event) {
+    const pointers = pointersRef.current;
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+
+    if (gesture.mode === "pinch") {
+      if (pointers.size < 2) return;
+      const [first, second] = [...pointers.values()];
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+
+      let nextZoom = gesture.startZoom * (distance / gesture.startDistance);
+      if (nextZoom < 1) nextZoom = 1 - (1 - nextZoom) / 2.4;
+      if (nextZoom > CROP_MAX_ZOOM) nextZoom = CROP_MAX_ZOOM + (nextZoom - CROP_MAX_ZOOM) / 3;
+
+      const ratio = nextZoom / gesture.startZoom;
+      applyTransform(
+        nextZoom,
+        clampOffset(
+          {
+            x: gesture.center.x - (gesture.center.x - gesture.startOffset.x) * ratio,
+            y: gesture.center.y - (gesture.center.y - gesture.startOffset.y) * ratio,
+          },
+          nextZoom,
+          true
+        )
+      );
+      return;
+    }
+
+    applyTransform(
+      zoomRef.current,
+      clampOffset(
+        {
+          x: gesture.startOffset.x + event.clientX - gesture.startX,
+          y: gesture.startOffset.y + event.clientY - gesture.startY,
+        },
+        zoomRef.current,
+        true
+      )
+    );
+  }
+
+  function handlePointerUp(event) {
+    const pointers = pointersRef.current;
+    if (!pointers.has(event.pointerId)) return;
+    pointers.delete(event.pointerId);
+
+    if (pointers.size === 1) {
+      const [point] = [...pointers.values()];
+      gestureRef.current = {
+        mode: "pan",
+        startX: point.x,
+        startY: point.y,
+        startOffset: offsetRef.current,
+      };
+      return;
+    }
+
+    if (pointers.size > 0) return;
+    gestureRef.current = null;
+    setAnimated(true);
+
+    const settledZoom = clampValue(zoomRef.current, 1, CROP_MAX_ZOOM);
+    applyTransform(settledZoom, clampOffset(offsetRef.current, settledZoom));
+  }
+
+  function handleWheel(event) {
+    if (!frameRef.current) return;
+
+    const nextZoom = clampValue(zoomRef.current * Math.exp(-event.deltaY * 0.0022), 1, CROP_MAX_ZOOM);
+    if (nextZoom === zoomRef.current) return;
+
+    const point = frameCenterPoint(event.clientX, event.clientY);
+    const ratio = nextZoom / zoomRef.current;
+    setAnimated(false);
+    applyTransform(
+      nextZoom,
+      clampOffset(
+        {
+          x: point.x - (point.x - offsetRef.current.x) * ratio,
+          y: point.y - (point.y - offsetRef.current.y) * ratio,
+        },
+        nextZoom
+      )
+    );
+  }
+
+  function resetTransform() {
+    setAnimated(true);
+    applyTransform(1, { x: 0, y: 0 });
+  }
+
+  function handleSave() {
+    if (!imageSize || !cover || saving) return;
+    setSaving(true);
+
+    const image = new Image();
+
+    image.onload = () => {
+      const size = 1000;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+
+      const ctx = canvas.getContext("2d");
+      const toCanvas = size / frameSize;
+
+      const drawWidth = cover.width * zoomRef.current * toCanvas;
+      const drawHeight = cover.height * zoomRef.current * toCanvas;
+      const dx = size / 2 - drawWidth / 2 + offsetRef.current.x * toCanvas;
+      const dy = size / 2 - drawHeight / 2 + offsetRef.current.y * toCanvas;
+
+      ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+      onSave(canvas.toDataURL("image/jpeg", 0.9));
+    };
+
+    image.src = src;
+  }
+
+  return (
+    <div className="cropModal">
+      <div className="cropTop">
+        <button onClick={onCancel}>キャンセル</button>
+        <strong>トリミング</strong>
+        <button className="cropSaveButton" onClick={handleSave} disabled={saving}>
+          {saving ? "保存中…" : "保存"}
+        </button>
+      </div>
+
+      <div
+        className="cropStage"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onWheel={handleWheel}
+      >
+        <div className="cropFrame" ref={frameRef}>
+          {cover && (
+            <img
+              src={src}
+              alt="トリミング中"
+              draggable={false}
+              style={{
+                width: `${cover.width}px`,
+                height: `${cover.height}px`,
+                transform: `translate(-50%, -50%) translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+                transition: animated ? "transform 0.28s cubic-bezier(0.22, 0.9, 0.3, 1)" : "none",
+              }}
+            />
+          )}
+          <div className="cropGrid" aria-hidden="true" />
+        </div>
+      </div>
+
+      <div className="cropControls">
+        <p className="cropHint">ドラッグで位置調整・ピンチで拡大縮小</p>
+        <button className="cropResetButton" onClick={resetTransform}>
+          リセット
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
     const [selectedDate, setSelectedDate] = useState(todayString());
     const [currentMonth, setCurrentMonth] = useState(getMonthString(todayString()));
@@ -844,11 +1102,7 @@ function App() {
   const [pageTouchStart, setPageTouchStart] = useState(null);
   const [pageAnimation, setPageAnimation] = useState("");
   const [cropTarget, setCropTarget] = useState(null);
-  const [cropSettings, setCropSettings] = useState({ zoom: 1.2, x: 0, y: 0 });
   const activeDateRef = useRef(selectedDate);
-  const cropDragRef = useRef(null);
-  const cropPointersRef = useRef(new Map());
-  const cropPinchRef = useRef(null);
 
   const savedDateSet = useMemo(() => {
     return new Set(allRecords.map((item) => item.date));
@@ -1243,104 +1497,20 @@ function App() {
   }
   function openCrop(photoKey) {
     setCropTarget(photoKey);
-    setCropSettings({ zoom: 1.2, x: 0, y: 0 });
   }
 
-  function saveCroppedPhoto() {
+  async function saveCroppedPhoto(croppedDataUrl) {
     if (!cropTarget) return;
 
-    const src = record.photos?.[cropTarget];
-    if (!src) return;
+    await updateRecord({
+      ...record,
+      photos: {
+        ...record.photos,
+        [cropTarget]: croppedDataUrl,
+      },
+    });
 
-    const img = new Image();
-
-    img.onload = async () => {
-      const size = 1000;
-      const canvas = document.createElement("canvas");
-
-      canvas.width = size;
-      canvas.height = size;
-
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, size, size);
-
-      const coverScale = Math.max(size / img.width, size / img.height);
-      const scale = coverScale * cropSettings.zoom;
-
-      const drawWidth = img.width * scale;
-      const drawHeight = img.height * scale;
-
-      const moveX = (cropSettings.x / 100) * size;
-      const moveY = (cropSettings.y / 100) * size;
-
-      const dx = (size - drawWidth) / 2 + moveX;
-      const dy = (size - drawHeight) / 2 + moveY;
-
-      ctx.drawImage(img, dx, dy, drawWidth, drawHeight);
-
-      const cropped = canvas.toDataURL("image/jpeg", 0.9);
-
-      const next = {
-        ...record,
-        photos: {
-          ...record.photos,
-          [cropTarget]: cropped,
-        },
-      };
-
-      await updateRecord(next);
-      setCropTarget(null);
-    };
-
-    img.src = src;
-  }
-  function startCropDrag(event) {
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    const pointers = cropPointersRef.current;
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-
-    if (pointers.size === 1) {
-      cropDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: cropSettings.x, y: cropSettings.y };
-    }
-
-    if (pointers.size === 2) {
-      const [first, second] = [...pointers.values()];
-      cropPinchRef.current = { distance: Math.hypot(second.x - first.x, second.y - first.y), zoom: cropSettings.zoom };
-      cropDragRef.current = null;
-    }
-  }
-
-  function moveCropDrag(event) {
-    const pointers = cropPointersRef.current;
-    if (!pointers.has(event.pointerId)) return;
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-
-    if (pointers.size === 2 && cropPinchRef.current) {
-      const [first, second] = [...pointers.values()];
-      const distance = Math.hypot(second.x - first.x, second.y - first.y);
-      const zoom = Math.max(1, Math.min(3, cropPinchRef.current.zoom * (distance / cropPinchRef.current.distance)));
-      setCropSettings((prev) => ({ ...prev, zoom }));
-      return;
-    }
-
-    const drag = cropDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(-40, Math.min(40, drag.x + ((event.clientX - drag.startX) / rect.width) * 100));
-    const y = Math.max(-40, Math.min(40, drag.y + ((event.clientY - drag.startY) / rect.height) * 100));
-    setCropSettings((prev) => ({ ...prev, x, y }));
-  }
-
-  function endCropDrag(event) {
-    const pointers = cropPointersRef.current;
-    pointers.delete(event.pointerId);
-    cropPinchRef.current = null;
-    cropDragRef.current = null;
-    if (pointers.size === 1) {
-      const [pointerId, point] = [...pointers.entries()][0];
-      cropDragRef.current = { pointerId, startX: point.x, startY: point.y, x: cropSettings.x, y: cropSettings.y };
-    }
+    setCropTarget(null);
   }
 
   return (
@@ -1636,36 +1806,11 @@ function App() {
       )}
 
       {cropTarget && record.photos?.[cropTarget] && (
-        <div className="cropModal">
-          <div className="cropTop">
-            <button onClick={() => setCropTarget(null)}>キャンセル</button>
-            <strong>トリミング</strong>
-            <button onClick={saveCroppedPhoto}>保存</button>
-          </div>
-
-          <div className="cropStage">
-            <div className="cropFrame" onPointerDown={startCropDrag} onPointerMove={moveCropDrag} onPointerUp={endCropDrag} onPointerCancel={endCropDrag}>
-              <img
-                src={record.photos[cropTarget]}
-                alt="トリミング中"
-                style={{
-                  transform: `translate(${cropSettings.x}%, ${cropSettings.y}%) scale(${cropSettings.zoom})`,
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="cropControls">
-            <p className="cropHint">写真を拡大して、矢印で位置を合わせます</p>
-            <div className="cropZoomRow">
-              <span>ズーム</span>
-              <button aria-label="縮小" onClick={() => setCropSettings((prev) => ({ ...prev, zoom: Math.max(1, Number((prev.zoom - 0.1).toFixed(2)))}))}>−</button>
-              <input type="range" min="1" max="3" step="0.05" value={cropSettings.zoom} onChange={(e) => setCropSettings((prev) => ({ ...prev, zoom: Number(e.target.value) }))} />
-              <button aria-label="拡大" onClick={() => setCropSettings((prev) => ({ ...prev, zoom: Math.min(3, Number((prev.zoom + 0.1).toFixed(2)))}))}>＋</button>
-            </div>
-            <p className="cropDragHint">写真は指1本で移動・指2本で拡大縮小できます</p>
-          </div>
-        </div>
+        <CropModal
+          src={record.photos[cropTarget]}
+          onCancel={() => setCropTarget(null)}
+          onSave={saveCroppedPhoto}
+        />
       )}
     </main>
   );
