@@ -1,4 +1,4 @@
-﻿* {
+* {
   box-sizing: border-box;
 }
 
@@ -514,6 +514,7 @@ button {
 }
 
 .photoAdd {
+  position: relative;
   display: grid;
   place-items: center;
   align-content: center;
@@ -526,6 +527,8 @@ button {
 }
 
 .photoAdd span {
+  position: relative;
+  z-index: 1;
   width: 38px;
   height: 38px;
   display: grid;
@@ -538,6 +541,8 @@ button {
 }
 
 .photoAdd small {
+  position: relative;
+  z-index: 1;
   color: var(--muted);
   font-size: 11px;
   font-weight: 900;
@@ -555,48 +560,12 @@ button {
   cursor: pointer;
 }
 
-/* 調子 */
-.conditionBlock {
-  display: grid;
-  gap: 10px;
-}
-
-.conditionButtons {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
-}
-
-.conditionButtons button {
-  height: 42px;
-  border: none;
-  border-radius: 14px;
-  background: #f2f2f7;
-  color: #6b6b70;
-  font-size: 16px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.conditionButtons button.on {
-  background: var(--blue);
-  color: white;
-}
-
-.conditionBlock p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-}
-
 /* チェック */
 .checkList {
   display: grid;
   gap: 10px;
 }
 
-.sleepInputRow,
 .checkRow {
   display: flex;
   align-items: center;
@@ -608,16 +577,101 @@ button {
   background: #f2f2f7;
 }
 
-.sleepInputRow span,
 .checkRow span {
   font-size: 14px;
   font-weight: 900;
 }
 
-.sleepInputRow div {
+/* 睡眠時間バー */
+.sleepBarBlock {
+  display: grid;
+  gap: 6px;
+  padding: 12px 12px 10px;
+  border-radius: 16px;
+  background: #f2f2f7;
+}
+
+.sleepBarHead {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sleepBarHead span {
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.sleepBarHead strong {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--blue);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sleepBar {
+  position: relative;
+  height: 48px;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.sleepBarTrack {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 50%;
+  height: 12px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: #e2e2e9;
+}
+
+.sleepBarFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.sleepBar.empty .sleepBarFill {
+  opacity: 0.3;
+}
+
+.sleepBar.empty .sleepHandle {
+  opacity: 0.55;
+}
+
+.sleepHandle {
+  position: absolute;
+  top: 50%;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+}
+
+.sleepHandle i {
+  font-style: normal;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.sleepBarScale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .sleepInputRow input {
@@ -960,10 +1014,43 @@ button {
   inset: 0;
   z-index: 30;
   background: #000;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
   overflow: hidden;
-  touch-action: pan-y;
+  overscroll-behavior: none;
+}
+
+.viewerStage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.viewerStrip {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+.viewerSlide {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.viewerImage {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  will-change: transform;
 }
 
 .viewerTop {
@@ -972,13 +1059,13 @@ button {
   left: 0;
   right: 0;
   z-index: 4;
-  height: 72px;
+  height: 84px;
   display: grid;
-  grid-template-columns: 82px 1fr 82px;
+  grid-template-columns: 52px 1fr 52px;
   align-items: center;
-  padding: 14px 14px 10px;
+  padding: 18px 16px 14px;
   color: white;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.74), transparent);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0));
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
@@ -990,52 +1077,37 @@ button {
 
 .viewerClose,
 .viewerTrash {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
   border: none;
-  background: transparent;
+  border-radius: 999px;
+  background: rgba(28, 28, 30, 0.72);
   color: white;
-  font-size: 16px;
-  font-weight: 800;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  font-size: 28px;
+  line-height: 1;
   cursor: pointer;
 }
 
 .viewerClose {
-  text-align: left;
+  font-weight: 300;
 }
 
 .viewerTrash {
-  text-align: right;
+  justify-self: end;
   color: #ff453a;
+  font-size: 18px;
 }
 
 .viewerCount {
   text-align: center;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.74);
   font-weight: 800;
-}
-
-.viewerTapArea {
-  width: 100%;
-  height: 100vh;
-  border: none;
-  padding: 0;
-  background: transparent;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.viewerImage {
-  max-width: 100%;
-  max-height: 100vh;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-  transition: transform 0.18s ease;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.88);
 }
 
 .viewerBottom {
@@ -1044,11 +1116,11 @@ button {
   right: 0;
   bottom: 0;
   z-index: 4;
-  min-height: 86px;
+  min-height: 112px;
   display: grid;
   place-items: end center;
-  padding: 18px 18px 26px;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.74), transparent);
+  padding: 30px 20px calc(22px + env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0));
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
@@ -1060,58 +1132,54 @@ button {
 
 .viewerBottom p {
   margin: 0;
-  color: white;
+  max-width: 360px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(28, 28, 30, 0.56);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: rgba(255, 255, 255, 0.92);
   text-align: center;
   font-size: 13px;
   font-weight: 800;
+  line-height: 1.45;
 }
 
 .viewerNav {
-  position: fixed;
-  top: 50%;
-  z-index: 5;
-  width: 46px;
-  height: 64px;
-  border: none;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.16);
-  color: rgba(255, 255, 255, 0.78);
-  font-size: 44px;
-  line-height: 1;
-  transform: translateY(-50%);
-  cursor: pointer;
+  display: none;
 }
 
-.viewerNav.left {
-  left: 8px;
-}
+@media (hover: hover) and (pointer: fine) {
+  .viewerNav {
+    position: fixed;
+    top: 50%;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 64px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(30, 30, 30, 0.4);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 40px;
+    line-height: 1;
+    transform: translateY(-50%);
+    cursor: pointer;
+  }
 
-.viewerNav.right {
-  right: 8px;
-}
+  .viewerNav:disabled {
+    opacity: 0.25;
+    cursor: default;
+  }
 
-.viewerZoomTools {
-  position: fixed;
-  right: 14px;
-  bottom: 92px;
-  z-index: 6;
-  display: flex;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 999px;
-  background: rgba(30, 30, 30, 0.68);
-  backdrop-filter: blur(16px);
-}
+  .viewerNav.left {
+    left: 10px;
+  }
 
-.viewerZoomTools button {
-  border: none;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  color: white;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
+  .viewerNav.right {
+    right: 10px;
+  }
 }
 
 /* トリミング */
@@ -1293,16 +1361,6 @@ button {
     border: 1px dashed #c7c7cc;
   }
 
-  .conditionButtons {
-    gap: 5px;
-  }
-
-  .conditionButtons button {
-    height: 38px;
-    border-radius: 12px;
-    font-size: 14px;
-  }
-
   .momentTabs button {
     font-size: 9.5px;
     padding: 8px 1px;
@@ -1341,15 +1399,6 @@ button {
     font-size: 13px;
   }
 
-  .viewerNav {
-    display: none;
-  }
-
-  .viewerZoomTools {
-    right: 10px;
-    bottom: 94px;
-  }
-
   .cropFrame {
     width: 86vw;
   }
@@ -1361,9 +1410,6 @@ button {
 .monthHabitCard {
   margin-bottom: 10px;
 }
-.sleepTimeInputs { display: flex; align-items: center; gap: 6px; }
-.sleepTimeInputs input { width: 92px; }
-.sleepTimeInputs b { color: var(--muted); }
 
 
 .monthPhotoGroups { display: grid; gap: 22px; }
@@ -1387,69 +1433,10 @@ button {
 .cropDragHint { margin: 0; color: rgba(255,255,255,.72); text-align: center; font-size: 12px; font-weight: 800; }
 
 
-.viewerTapArea { touch-action: none; }
-
-
-/* iPhone写真アプリ風ビューア */
-.photoViewer {
-  background: #000;
-  overscroll-behavior: none;
-}
-
-.viewerTop {
-  position: fixed;
-  top: 0;
-  height: 88px;
-  grid-template-columns: 52px 1fr 52px;
-  padding: 22px 18px 18px;
-  background: linear-gradient(180deg, rgba(0,0,0,.62), rgba(0,0,0,0));
-}
-
-.viewerClose,
-.viewerTrash {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: 999px;
-  background: rgba(28,28,30,.72);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  font-size: 28px;
-  line-height: 1;
-}
-
-.viewerClose { font-weight: 300; }
-.viewerTrash { justify-self: end; color: #ff453a; font-size: 18px; }
-.viewerCount { font-variant-numeric: tabular-nums; color: rgba(255,255,255,.88); }
-.viewerTapArea { min-height: 100dvh; touch-action: none; }
-.viewerImage { transition: transform .08s ease-out; will-change: transform; }
-
-.viewerBottom {
-  min-height: 118px;
-  padding: 34px 24px calc(24px + env(safe-area-inset-bottom));
-  background: linear-gradient(0deg, rgba(0,0,0,.78), rgba(0,0,0,0));
-}
-
-.viewerBottom p {
-  max-width: 360px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: rgba(28,28,30,.56);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  color: rgba(255,255,255,.92);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.viewerNav,
-.viewerZoomTools { display: none; }
-
 @media (max-width: 520px) {
-  .viewerTop { height: 78px; padding: 14px 14px 12px; }
+  .viewerTop { height: 76px; padding: 12px 12px 10px; }
   .viewerClose, .viewerTrash { width: 40px; height: 40px; }
-  .viewerBottom { min-height: 104px; padding-inline: 16px; }
+  .viewerBottom { min-height: 100px; padding-inline: 16px; }
 }
 
 .bottomNav { grid-template-columns: repeat(3, 1fr); }
@@ -1468,8 +1455,12 @@ button {
 .memoPhotoAdd b { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 999px; background: #f2f2f7; font-size: 28px; font-weight: 300; }
 .memoPhotoAdd span { color: var(--muted); font-size: 12px; font-weight: 800; }
 
-.memoPhotoGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.memoPhotoItem { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 16px; background: #f2f2f7; }
+.memoPhotoGrid { display: grid; gap: 3px; }
+.memoPhotoGrid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.memoPhotoGrid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.memoPhotoGrid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.memoPhotoItem { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: #f2f2f7; }
 .memoPhotoItem .memoPhoto { width: 100%; height: 100%; max-height: none; object-fit: cover; border-radius: 0; }
-.memoPhotoItem button { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border: none; border-radius: 999px; color: white; background: rgba(0,0,0,.56); font-size: 20px; line-height: 1; cursor: pointer; }
-.memoPhotoGrid .memoPhotoAdd { min-height: 0; aspect-ratio: 1; }
+.memoPhotoItem .memoPhotoOpen { width: 100%; height: 100%; padding: 0; border: none; background: transparent; cursor: pointer; }
+.memoPhotoItem .memoPhotoDelete { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; border: none; border-radius: 999px; color: white; background: rgba(0,0,0,.56); font-size: 18px; line-height: 1; cursor: pointer; }
+.memoPhotoGrid .memoPhotoAdd { min-height: 0; aspect-ratio: 1; border-radius: 8px; }

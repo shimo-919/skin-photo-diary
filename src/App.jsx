@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./index.css";
 
 const DB_NAME = "skin-photo-diary-db";
@@ -20,14 +20,6 @@ const CHECK_ITEMS = [
   { key: "morningWash", label: "朝洗顔", type: "check" },
   { key: "sunscreen", label: "日焼け止め", type: "check" },
 ];
-
-const CONDITION_LABELS = {
-  1: "かなり悪い",
-  2: "悪い",
-  3: "普通",
-  4: "良い",
-  5: "かなり良い",
-};
 
 const WEEK_DAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -59,9 +51,9 @@ function createEmptyRecord(date) {
     date,
     photoMoment: "afterNightWash",
     photos: createEmptyPhotos(),
-    conditionScore: 3,
-    checks: { sleepStart: "", sleepEnd: "", wakeupSkinGood: false, medicineApplied: false, morningWash: false, sunscreen: false, betterThanYesterday: false },
+    checks: { sleepStart: "", sleepEnd: "", medicineApplied: false, morningWash: false, sunscreen: false },
     skinMemo: "",
+    foodMemo: "",
     updatedAt: new Date().toISOString(),
   };
 }
@@ -112,21 +104,13 @@ function normalizeRecord(raw, date) {
     photoMoment = nestedMoment.key;
   }
 
-  let conditionScore = raw.conditionScore;
-
-  if (!conditionScore && raw.scores) {
-    const values = Object.values(raw.scores).map(Number);
-    const avg = values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 3;
-    conditionScore = Math.max(1, Math.min(5, Math.round(6 - avg)));
-  }
-
   return {
     date: raw.date || date,
     photoMoment,
     photos: normalizePhotos(raw.photos, oldSlot),
-    conditionScore: Number(conditionScore || 3),
-    checks: { sleepStart: raw.checks?.sleepStart || "", sleepEnd: raw.checks?.sleepEnd || "", wakeupSkinGood: Boolean(raw.checks?.wakeupSkinGood), medicineApplied: Boolean(raw.checks?.medicineApplied), morningWash: Boolean(raw.checks?.morningWash), sunscreen: Boolean(raw.checks?.sunscreen), betterThanYesterday: Boolean(raw.checks?.betterThanYesterday) },
+    checks: { sleepStart: raw.checks?.sleepStart || "", sleepEnd: raw.checks?.sleepEnd || "", medicineApplied: Boolean(raw.checks?.medicineApplied), morningWash: Boolean(raw.checks?.morningWash), sunscreen: Boolean(raw.checks?.sunscreen) },
     skinMemo: raw.skinMemo || oldSlot?.memo || "",
+    foodMemo: raw.foodMemo || "",
     updatedAt: raw.updatedAt || new Date().toISOString(),
   };
 }
@@ -303,9 +287,11 @@ function hasAnyContent(record) {
   return (
     hasAnyPhoto(record) ||
     record.skinMemo ||
+    record.foodMemo ||
     record.previousDayMemo ||
-    record.conditionScore ||
-    record.checks?.sleepHours ||
+    record.checks?.sleepStart ||
+    record.checks?.sleepEnd ||
+    record.checks?.medicineApplied ||
     record.checks?.morningWash ||
     record.checks?.sunscreen
   );
@@ -317,6 +303,523 @@ function getDateDiff(fromDate, toDate) {
   const from = new Date(`${fromDate}T00:00:00`);
   const to = new Date(`${toDate}T00:00:00`);
   return Math.round((to - from) / (1000 * 60 * 60 * 24));
+}
+
+const VIEWER_MAX_ZOOM = 4;
+const VIEWER_SLIDE_GAP = 24;
+
+function clampValue(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+/* 睡眠バーの左端の時刻（18時スタートで深夜をまたいでも連続して扱える） */
+const SLEEP_AXIS_START = 18;
+
+function sleepHourToAxis(hour) {
+  return (hour - SLEEP_AXIS_START + 24) % 24;
+}
+
+function sleepAxisToHour(axis) {
+  return (axis + SLEEP_AXIS_START) % 24;
+}
+
+function formatSleepTime(hour) {
+  return `${Math.floor(hour) % 24}:${hour % 1 ? "30" : "00"}`;
+}
+
+function formatSleepDuration(hours) {
+  const whole = Math.floor(hours);
+  return hours % 1 ? `${whole}時間30分` : `${whole}時間`;
+}
+
+function SleepRangeBar({ start, end, onChange }) {
+  const startHour = Number.parseFloat(start);
+  const endHour = Number.parseFloat(end);
+  const hasValue = Number.isFinite(startHour) && Number.isFinite(endHour);
+
+  const [drag, setDrag] = useState(null);
+  const trackRef = useRef(null);
+  const dragHandleRef = useRef(null);
+
+  const baseStart = hasValue ? sleepHourToAxis(startHour) : sleepHourToAxis(23);
+  let baseEnd = hasValue ? sleepHourToAxis(endHour) : sleepHourToAxis(7);
+  if (baseEnd <= baseStart) baseEnd = Math.min(24, baseStart + 8);
+
+  const shown = drag || { start: baseStart, end: baseEnd };
+  const duration = shown.end - shown.start;
+
+  function axisFromEvent(event) {
+    const rect = trackRef.current.getBoundingClientRect();
+    const ratio = clampValue((event.clientX - rect.left) / rect.width, 0, 1);
+    return Math.round(ratio * 24 * 2) / 2;
+  }
+
+  function moveHandle(which, axis, current) {
+    if (which === "start") {
+      return { ...current, start: clampValue(axis, 0, current.end - 0.5) };
+    }
+    return { ...current, end: clampValue(axis, current.start + 0.5, 23.5) };
+  }
+
+  function handlePointerDown(event) {
+    if (!trackRef.current) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    const axis = axisFromEvent(event);
+    const which = Math.abs(axis - shown.start) <= Math.abs(axis - shown.end) ? "start" : "end";
+    dragHandleRef.current = which;
+    setDrag(moveHandle(which, axis, shown));
+  }
+
+  function handlePointerMove(event) {
+    const which = dragHandleRef.current;
+    if (!which) return;
+    setDrag((current) => moveHandle(which, axisFromEvent(event), current || shown));
+  }
+
+  function handlePointerUp() {
+    const which = dragHandleRef.current;
+    if (!which) return;
+    dragHandleRef.current = null;
+
+    setDrag((current) => {
+      const finalRange = current || shown;
+      onChange(String(sleepAxisToHour(finalRange.start)), String(sleepAxisToHour(finalRange.end)));
+      return null;
+    });
+  }
+
+  const startLabel = formatSleepTime(sleepAxisToHour(shown.start));
+  const endLabel = formatSleepTime(sleepAxisToHour(shown.end));
+
+  return (
+    <div className="sleepBarBlock">
+      <div className="sleepBarHead">
+        <span>睡眠時間</span>
+        <strong>
+          {hasValue || drag ? `${startLabel}〜${endLabel}・${formatSleepDuration(duration)}` : "バーを動かして設定"}
+        </strong>
+      </div>
+
+      <div
+        className={`sleepBar ${hasValue || drag ? "" : "empty"}`}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      >
+        <div className="sleepBarTrack" ref={trackRef}>
+          <div
+            className="sleepBarFill"
+            style={{ left: `${(shown.start / 24) * 100}%`, width: `${(duration / 24) * 100}%` }}
+          />
+          <span className="sleepHandle" style={{ left: `${(shown.start / 24) * 100}%` }}>
+            <i>🌙</i>
+          </span>
+          <span className="sleepHandle" style={{ left: `${(shown.end / 24) * 100}%` }}>
+            <i>☀️</i>
+          </span>
+        </div>
+      </div>
+
+      <div className="sleepBarScale" aria-hidden="true">
+        <span>18時</span>
+        <span>0時</span>
+        <span>6時</span>
+        <span>12時</span>
+        <span>18時</span>
+      </div>
+    </div>
+  );
+}
+
+function PhotoViewer({ items, index, canDelete, onIndexChange, onClose, onDelete }) {
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragX, setDragX] = useState(0);
+  const [dismiss, setDismiss] = useState({ x: 0, y: 0 });
+  const [animated, setAnimated] = useState(true);
+
+  const stageRef = useRef(null);
+  const imageRef = useRef(null);
+  const pointersRef = useRef(new Map());
+  const gestureRef = useRef(null);
+  const zoomRef = useRef(1);
+  const offsetRef = useRef({ x: 0, y: 0 });
+  const lastTapRef = useRef({ time: 0, x: 0, y: 0 });
+  const tapTimerRef = useRef(null);
+
+  const total = items.length;
+  const current = items[index];
+
+  useEffect(() => {
+    zoomRef.current = 1;
+    offsetRef.current = { x: 0, y: 0 };
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    setDismiss({ x: 0, y: 0 });
+  }, [index, items]);
+
+  useEffect(() => {
+    return () => window.clearTimeout(tapTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft") goTo(index - 1);
+      if (event.key === "ArrowRight") goTo(index + 1);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
+
+  function applyZoom(nextZoom, nextOffset) {
+    zoomRef.current = nextZoom;
+    offsetRef.current = nextOffset;
+    setZoom(nextZoom);
+    setOffset(nextOffset);
+  }
+
+  function getPanLimit(targetZoom) {
+    const stage = stageRef.current;
+    const image = imageRef.current;
+    if (!stage || !image) return { x: 0, y: 0 };
+
+    return {
+      x: Math.max(0, (image.offsetWidth * targetZoom - stage.clientWidth) / 2),
+      y: Math.max(0, (image.offsetHeight * targetZoom - stage.clientHeight) / 2),
+    };
+  }
+
+  function clampPan(target, targetZoom, soft = false) {
+    const limit = getPanLimit(targetZoom);
+
+    const clampAxis = (value, max) => {
+      if (!soft) return clampValue(value, -max, max);
+      if (value > max) return max + (value - max) / 3;
+      if (value < -max) return -max + (value + max) / 3;
+      return value;
+    };
+
+    return { x: clampAxis(target.x, limit.x), y: clampAxis(target.y, limit.y) };
+  }
+
+  function goTo(nextIndex) {
+    if (nextIndex < 0 || nextIndex >= total || nextIndex === index) return;
+    setAnimated(true);
+    setDragX(0);
+    onIndexChange(nextIndex);
+  }
+
+  function stageCenterPoint(clientX, clientY) {
+    const rect = stageRef.current.getBoundingClientRect();
+    return { x: clientX - rect.left - rect.width / 2, y: clientY - rect.top - rect.height / 2 };
+  }
+
+  function recordMove(gesture, event) {
+    gesture.moves.push({ x: event.clientX, y: event.clientY, time: event.timeStamp });
+    while (gesture.moves.length > 1 && event.timeStamp - gesture.moves[0].time > 110) {
+      gesture.moves.shift();
+    }
+  }
+
+  function swipeVelocity(gesture, event) {
+    const first = gesture.moves[0];
+    if (!first || event.timeStamp - first.time < 1) return 0;
+    return (event.clientX - first.x) / (event.timeStamp - first.time);
+  }
+
+  function handlePointerDown(event) {
+    stageRef.current?.setPointerCapture?.(event.pointerId);
+    const pointers = pointersRef.current;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size === 1) {
+      setAnimated(false);
+      gestureRef.current = {
+        mode: "press",
+        startX: event.clientX,
+        startY: event.clientY,
+        startOffset: offsetRef.current,
+        moves: [{ x: event.clientX, y: event.clientY, time: event.timeStamp }],
+      };
+      return;
+    }
+
+    if (pointers.size === 2) {
+      const [first, second] = [...pointers.values()];
+      gestureRef.current = {
+        mode: "pinch",
+        startZoom: zoomRef.current,
+        startOffset: offsetRef.current,
+        startDistance: Math.hypot(second.x - first.x, second.y - first.y),
+        center: stageCenterPoint((first.x + second.x) / 2, (first.y + second.y) / 2),
+      };
+      setAnimated(false);
+      setDragX(0);
+      setDismiss({ x: 0, y: 0 });
+    }
+  }
+
+  function handlePointerMove(event) {
+    const pointers = pointersRef.current;
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+
+    if (gesture.mode === "pinch") {
+      if (pointers.size < 2) return;
+      const [first, second] = [...pointers.values()];
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+
+      let nextZoom = gesture.startZoom * (distance / gesture.startDistance);
+      if (nextZoom < 1) nextZoom = 1 - (1 - nextZoom) / 2.4;
+      if (nextZoom > VIEWER_MAX_ZOOM) nextZoom = VIEWER_MAX_ZOOM + (nextZoom - VIEWER_MAX_ZOOM) / 3;
+
+      const ratio = nextZoom / gesture.startZoom;
+      applyZoom(
+        nextZoom,
+        clampPan(
+          {
+            x: gesture.center.x - (gesture.center.x - gesture.startOffset.x) * ratio,
+            y: gesture.center.y - (gesture.center.y - gesture.startOffset.y) * ratio,
+          },
+          nextZoom,
+          true
+        )
+      );
+      return;
+    }
+
+    const dx = event.clientX - gesture.startX;
+    const dy = event.clientY - gesture.startY;
+    recordMove(gesture, event);
+
+    if (gesture.mode === "press") {
+      if (Math.hypot(dx, dy) < 7) return;
+      if (zoomRef.current > 1.01) {
+        gesture.mode = "pan";
+      } else if (dy > Math.abs(dx) * 1.2) {
+        gesture.mode = "dismiss";
+      } else {
+        gesture.mode = "swipe";
+      }
+    }
+
+    if (gesture.mode === "pan") {
+      applyZoom(
+        zoomRef.current,
+        clampPan({ x: gesture.startOffset.x + dx, y: gesture.startOffset.y + dy }, zoomRef.current, true)
+      );
+    } else if (gesture.mode === "swipe") {
+      const resist = (index === 0 && dx > 0) || (index === total - 1 && dx < 0);
+      setDragX(resist ? dx / 3 : dx);
+    } else if (gesture.mode === "dismiss") {
+      setDismiss({ x: dx * 0.82, y: Math.max(0, dy) });
+    }
+  }
+
+  function handlePointerUp(event) {
+    const pointers = pointersRef.current;
+    if (!pointers.has(event.pointerId)) return;
+    pointers.delete(event.pointerId);
+
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+
+    if (gesture.mode === "pinch") {
+      setAnimated(true);
+      const settledZoom = clampValue(zoomRef.current, 1, VIEWER_MAX_ZOOM);
+      applyZoom(settledZoom, settledZoom === 1 ? { x: 0, y: 0 } : clampPan(offsetRef.current, settledZoom));
+
+      if (pointers.size === 1 && settledZoom > 1) {
+        const [point] = [...pointers.values()];
+        setAnimated(false);
+        gestureRef.current = {
+          mode: "pan",
+          startX: point.x,
+          startY: point.y,
+          startOffset: offsetRef.current,
+          moves: [{ x: point.x, y: point.y, time: event.timeStamp }],
+        };
+      } else {
+        gestureRef.current = null;
+      }
+      return;
+    }
+
+    if (pointers.size > 0) return;
+    gestureRef.current = null;
+    setAnimated(true);
+
+    if (gesture.mode === "pan") {
+      applyZoom(zoomRef.current, clampPan(offsetRef.current, zoomRef.current));
+      return;
+    }
+
+    if (gesture.mode === "swipe") {
+      const width = stageRef.current?.clientWidth || 1;
+      const dx = event.clientX - gesture.startX;
+      const velocity = swipeVelocity(gesture, event);
+
+      let nextIndex = index;
+      if ((dx < -width * 0.28 || velocity < -0.55) && index < total - 1) nextIndex = index + 1;
+      if ((dx > width * 0.28 || velocity > 0.55) && index > 0) nextIndex = index - 1;
+
+      setDragX(0);
+      if (nextIndex !== index) onIndexChange(nextIndex);
+      return;
+    }
+
+    if (gesture.mode === "dismiss") {
+      if (event.clientY - gesture.startY > 130) {
+        onClose();
+      } else {
+        setDismiss({ x: 0, y: 0 });
+      }
+      return;
+    }
+
+    handleTap(event);
+  }
+
+  function handleTap(event) {
+    const lastTap = lastTapRef.current;
+    const isDoubleTap =
+      event.timeStamp - lastTap.time < 300 &&
+      Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < 40;
+
+    if (isDoubleTap) {
+      window.clearTimeout(tapTimerRef.current);
+      lastTapRef.current = { time: 0, x: 0, y: 0 };
+
+      if (zoomRef.current > 1.01) {
+        applyZoom(1, { x: 0, y: 0 });
+      } else {
+        const point = stageCenterPoint(event.clientX, event.clientY);
+        const nextZoom = 2.4;
+        applyZoom(nextZoom, clampPan({ x: point.x * (1 - nextZoom), y: point.y * (1 - nextZoom) }, nextZoom));
+      }
+      return;
+    }
+
+    lastTapRef.current = { time: event.timeStamp, x: event.clientX, y: event.clientY };
+    window.clearTimeout(tapTimerRef.current);
+    tapTimerRef.current = window.setTimeout(() => {
+      setChromeVisible((prev) => !prev);
+    }, 280);
+  }
+
+  function handleWheel(event) {
+    if (!stageRef.current) return;
+
+    const nextZoom = clampValue(zoomRef.current * Math.exp(-event.deltaY * 0.0022), 1, VIEWER_MAX_ZOOM);
+    if (nextZoom === zoomRef.current) return;
+
+    const point = stageCenterPoint(event.clientX, event.clientY);
+    const ratio = nextZoom / zoomRef.current;
+    setAnimated(false);
+    applyZoom(
+      nextZoom,
+      clampPan(
+        {
+          x: point.x - (point.x - offsetRef.current.x) * ratio,
+          y: point.y - (point.y - offsetRef.current.y) * ratio,
+        },
+        nextZoom
+      )
+    );
+  }
+
+  const dismissProgress = clampValue(dismiss.y / 260, 0, 1);
+  const chromeShown = chromeVisible && dismiss.y === 0;
+  const viewerTransition = animated ? "transform 0.32s cubic-bezier(0.22, 0.9, 0.3, 1)" : "none";
+
+  return (
+    <div className="photoViewer" style={{ backgroundColor: `rgba(0, 0, 0, ${1 - dismissProgress * 0.85})` }}>
+      <div
+        className="viewerStage"
+        ref={stageRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onWheel={handleWheel}
+      >
+        <div
+          className="viewerStrip"
+          style={{
+            transform: `translate3d(calc(${-index * 100}% + ${dragX - index * VIEWER_SLIDE_GAP}px), 0, 0)`,
+            transition: viewerTransition,
+          }}
+        >
+          {items.map((item, itemIndex) => {
+            if (Math.abs(itemIndex - index) > 1) return null;
+            const isCurrent = itemIndex === index;
+
+            return (
+              <div
+                className="viewerSlide"
+                key={itemIndex}
+                style={{ left: `calc(${itemIndex * 100}% + ${itemIndex * VIEWER_SLIDE_GAP}px)` }}
+              >
+                <img
+                  ref={isCurrent ? imageRef : undefined}
+                  className="viewerImage"
+                  src={item.src}
+                  alt={item.title || "拡大写真"}
+                  draggable={false}
+                  style={
+                    isCurrent
+                      ? {
+                          transform: `translate3d(${offset.x + dismiss.x}px, ${offset.y + dismiss.y}px, 0) scale(${zoom * (1 - dismissProgress * 0.35)})`,
+                          transition: viewerTransition,
+                        }
+                      : undefined
+                  }
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className={`viewerTop ${chromeShown ? "" : "hidden"}`}>
+        <button className="viewerClose" aria-label="閉じる" onClick={onClose}>
+          ‹
+        </button>
+
+        <div className="viewerCount">
+          {index + 1} / {total}
+        </div>
+
+        {canDelete ? (
+          <button className="viewerTrash" aria-label="この写真を削除" onClick={onDelete}>
+            🗑
+          </button>
+        ) : (
+          <span />
+        )}
+      </div>
+
+      <button className="viewerNav left" aria-label="前の写真" onClick={() => goTo(index - 1)} disabled={index === 0}>
+        ‹
+      </button>
+
+      <button className="viewerNav right" aria-label="次の写真" onClick={() => goTo(index + 1)} disabled={index === total - 1}>
+        ›
+      </button>
+
+      <div className={`viewerBottom ${chromeShown ? "" : "hidden"}`}>
+        <p>{current?.title}</p>
+      </div>
+    </div>
+  );
 }
 
 function App() {
@@ -338,10 +841,6 @@ function App() {
   const [compareMoment, setCompareMoment] = useState("all");
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [showCalendar, setShowCalendar] = useState(false);
-  const [touchStartX, setTouchStartX] = useState(null);
-  const [viewerChromeVisible, setViewerChromeVisible] = useState(true);
-  const [viewerZoom, setViewerZoom] = useState(1);
-  const [viewerPosition, setViewerPosition] = useState({ x: 0, y: 0 });
   const [pageTouchStart, setPageTouchStart] = useState(null);
   const [pageAnimation, setPageAnimation] = useState("");
   const [cropTarget, setCropTarget] = useState(null);
@@ -350,9 +849,6 @@ function App() {
   const cropDragRef = useRef(null);
   const cropPointersRef = useRef(new Map());
   const cropPinchRef = useRef(null);
-  const viewerPointersRef = useRef(new Map());
-  const viewerPinchRef = useRef(null);
-  const viewerDragRef = useRef(null);
 
   const savedDateSet = useMemo(() => {
     return new Set(allRecords.map((item) => item.date));
@@ -417,13 +913,6 @@ function App() {
   const monthSummaryStats = useMemo(() => {
     const recordsWithSomething = currentMonthRecords.filter(hasAnyContent);
 
-    const conditionRecords = recordsWithSomething.filter((item) => item.conditionScore);
-    const avgCondition =
-      conditionRecords.length > 0
-        ? conditionRecords.reduce((sum, item) => sum + Number(item.conditionScore || 0), 0) /
-        conditionRecords.length
-        : 0;
-
     const washCount = recordsWithSomething.filter((item) => item.checks?.morningWash).length;
     const sunscreenCount = recordsWithSomething.filter((item) => item.checks?.sunscreen).length;
 
@@ -439,7 +928,6 @@ function App() {
     return {
       totalDays: recordsWithSomething.length,
       photoDays: recordsWithSomething.filter(hasAnyPhoto).length,
-      avgCondition,
       avgSleep,
       washCount,
       sunscreenCount,
@@ -534,16 +1022,10 @@ function App() {
 
   function openRecordPhoto(photoKey) {
     const { items, index } = getRecordPhotoItems(photoKey);
-    setViewerChromeVisible(true);
-    setViewerZoom(1);
-    setViewerPosition({ x: 0, y: 0 });
     setSelectedPhoto({ items, index, canDelete: true });
   }
 
   function openGalleryPhoto(index) {
-    setViewerChromeVisible(true);
-    setViewerZoom(1);
-    setViewerPosition({ x: 0, y: 0 });
     setSelectedPhoto({
       items: galleryPhotos,
       index,
@@ -551,10 +1033,40 @@ function App() {
     });
   }
 
+  function openMemoPhoto(index) {
+    setSelectedPhoto({
+      items: memoPhotos.map((src, memoIndex) => ({
+        src,
+        title: `理想の肌・参考写真 ${memoIndex + 1}`,
+        memoIndex,
+      })),
+      index,
+      canDelete: true,
+      source: "memo",
+    });
+  }
+
   async function removePhotoFromModal() {
     if (!selectedPhoto?.canDelete) return;
 
     const current = selectedPhoto.items[selectedPhoto.index];
+    if (selectedPhoto.source === "memo") {
+      const ok = window.confirm("この写真を削除する？");
+      if (!ok) return;
+      const nextPhotos = memoPhotos.filter((_, index) => index !== current.memoIndex);
+      localStorage.setItem("skin-free-memo-photos", JSON.stringify(nextPhotos));
+      setMemoPhotos(nextPhotos);
+      if (!nextPhotos.length) {
+        setSelectedPhoto(null);
+        return;
+      }
+      setSelectedPhoto({
+        ...selectedPhoto,
+        items: nextPhotos.map((src, memoIndex) => ({ src, title: `理想の肌・参考写真 ${memoIndex + 1}`, memoIndex })),
+        index: Math.min(selectedPhoto.index, nextPhotos.length - 1),
+      });
+      return;
+    }
     if (!current?.photoKey) return;
 
     const ok = window.confirm("この写真を削除する？");
@@ -584,54 +1096,10 @@ function App() {
     });
   }
 
-  function movePhoto(diff) {
-    if (!selectedPhoto) return;
-
-    const total = selectedPhoto.items.length;
-    if (total <= 1) return;
-
-    const nextIndex = (selectedPhoto.index + diff + total) % total;
-
-    setViewerZoom(1);
-    setViewerPosition({ x: 0, y: 0 });
-    setSelectedPhoto({
-      ...selectedPhoto,
-      index: nextIndex,
-    });
-  }
-
-  function handleModalTouchStart(e) {
-    setTouchStartX(e.touches[0].clientX);
-  }
-
-  function handleModalTouchEnd(e) {
-    if (touchStartX === null) return;
-
-    const endX = e.changedTouches[0].clientX;
-    const diff = endX - touchStartX;
-
-    if (Math.abs(diff) > 45) {
-      if (diff < 0) {
-        movePhoto(1);
-      } else {
-        movePhoto(-1);
-      }
-    }
-
-    setTouchStartX(null);
-  }
-
   function updatePhotoMoment(momentKey) {
     updateRecord({
       ...record,
       photoMoment: momentKey,
-    });
-  }
-
-  function updateConditionScore(value) {
-    updateRecord({
-      ...record,
-      conditionScore: Number(value),
     });
   }
 
@@ -744,6 +1212,10 @@ function App() {
       return;
     }
 
+    if (e.target.closest?.(".sleepBarBlock")) {
+      return;
+    }
+
     setPageTouchStart({
       x: e.touches[0].clientX,
       y: e.touches[0].clientY,
@@ -769,46 +1241,6 @@ function App() {
 
     setPageTouchStart(null);
   }
-  function startViewerPinch(event) {
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    const pointers = viewerPointersRef.current;
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pointers.size === 1 && viewerZoom > 1) {
-      viewerDragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, position: viewerPosition };
-    }
-    if (pointers.size === 2) {
-      const [first, second] = [...pointers.values()];
-      const rect = event.currentTarget.getBoundingClientRect();
-      viewerPinchRef.current = { distance: Math.hypot(second.x - first.x, second.y - first.y), zoom: viewerZoom, position: viewerPosition, centerX: (first.x + second.x) / 2 - rect.left - rect.width / 2, centerY: (first.y + second.y) / 2 - rect.top - rect.height / 2 };
-      viewerDragRef.current = null;
-    }
-  }
-
-  function moveViewerPinch(event) {
-    const pointers = viewerPointersRef.current;
-    if (!pointers.has(event.pointerId)) return;
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pointers.size === 2 && viewerPinchRef.current) {
-      const [first, second] = [...pointers.values()];
-      const distance = Math.hypot(second.x - first.x, second.y - first.y);
-      const pinch = viewerPinchRef.current;
-      const zoom = Math.max(1, Math.min(4, pinch.zoom * Math.pow(distance / pinch.distance, 1.45)));
-      const ratio = zoom / pinch.zoom;
-      setViewerZoom(zoom);
-      setViewerPosition({ x: pinch.position.x - pinch.centerX * (ratio - 1), y: pinch.position.y - pinch.centerY * (ratio - 1) });
-      return;
-    }
-    const drag = viewerDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    setViewerPosition({ x: drag.position.x + event.clientX - drag.x, y: drag.position.y + event.clientY - drag.y });
-  }
-
-  function endViewerPinch(event) {
-    viewerPointersRef.current.delete(event.pointerId);
-    viewerPinchRef.current = null;
-    viewerDragRef.current = null;
-  }
-
   function openCrop(photoKey) {
     setCropTarget(photoKey);
     setCropSettings({ zoom: 1.2, x: 0, y: 0 });
@@ -910,8 +1342,6 @@ function App() {
       cropDragRef.current = { pointerId, startX: point.x, startY: point.y, x: cropSettings.x, y: cropSettings.y };
     }
   }
-
-  const currentModalPhoto = selectedPhoto?.items?.[selectedPhoto.index];
 
   return (
     <main className="app">
@@ -1076,35 +1506,21 @@ function App() {
 
           <section className="compactCard">
             <div className="cardHead">
-              <h3>今日の肌の調子</h3>
-              <p>1〜5</p>
-            </div>
-
-            <div className="conditionBlock">
-              <div className="conditionButtons">
-                {[1, 2, 3, 4, 5].map((num) => (
-                  <button
-                    key={num}
-                    className={Number(record.conditionScore || 3) === num ? "on" : ""}
-                    onClick={() => updateConditionScore(num)}
-                  >
-                    {num}
-                  </button>
-                ))}
-              </div>
-
-              <p>{CONDITION_LABELS[record.conditionScore || 3]}</p>
-            </div>
-          </section>
-
-          <section className="compactCard">
-            <div className="cardHead">
               <h3>チェック</h3>
             </div>
 
             <div className="checkList">
-              <label className="sleepInputRow"><span>睡眠時間</span><div className="sleepTimeInputs"><input type="text" inputMode="numeric" maxLength="2" placeholder="23" value={record.checks?.sleepStart || ""} onChange={(e) => updateCheck("sleepStart", e.target.value)} /><small>時</small><b>〜</b><input type="text" inputMode="numeric" maxLength="2" placeholder="7" value={record.checks?.sleepEnd || ""} onChange={(e) => updateCheck("sleepEnd", e.target.value)} /><small>時</small></div></label>
-              {[["wakeupSkinGood", "起床後の肌の調子が良い"], ["medicineApplied", "薬を塗った"], ["morningWash", "朝洗顔をした"], ["sunscreen", "日焼け止めを塗った"], ["betterThanYesterday", "前日と比べて肌の調子が良い"]].map(([key, label]) => <label className="checkRow" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(record.checks?.[key])} onChange={(e) => updateCheck(key, e.target.checked)} /></label>)}
+              <SleepRangeBar
+                start={record.checks?.sleepStart}
+                end={record.checks?.sleepEnd}
+                onChange={(sleepStart, sleepEnd) =>
+                  updateRecord({
+                    ...record,
+                    checks: { ...record.checks, sleepStart, sleepEnd },
+                  })
+                }
+              />
+              {[["medicineApplied", "薬を塗った"], ["morningWash", "朝洗顔をした"], ["sunscreen", "日焼け止めを塗った"]].map(([key, label]) => <label className="checkRow" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(record.checks?.[key])} onChange={(e) => updateCheck(key, e.target.checked)} /></label>)}
             </div></section>
 
           <section className="memoCard">
@@ -1197,8 +1613,8 @@ function App() {
           <section className="freeMemoCard">
             <textarea value={freeMemo} onChange={(e) => { const value = e.target.value; setFreeMemo(value); localStorage.setItem("skin-free-memo", value); }} placeholder="例：目指したい肌、参考にしたいこと、買いたいスキンケアなど" />
             <div className="memoPhotoHead"><span>理想の肌・参考写真</span></div>
-            <div className="memoPhotoGrid">
-              {memoPhotos.map((photo, index) => <div className="memoPhotoItem" key={`${photo.slice(0, 24)}-${index}`}><img className="memoPhoto" src={photo} alt={`理想の肌の参考写真 ${index + 1}`} /><button aria-label="写真を削除" onClick={() => removeMemoPhoto(index)}>×</button></div>)}
+            <div className={`memoPhotoGrid memoPhotoGrid-${Math.min(4, Math.max(2, memoPhotos.length + 1))}`}>
+              {memoPhotos.map((photo, index) => <div className="memoPhotoItem" key={`${photo.slice(0, 24)}-${index}`}><button className="memoPhotoOpen" onClick={() => openMemoPhoto(index)}><img className="memoPhoto" src={photo} alt={`理想の肌の参考写真 ${index + 1}`} /></button><button className="memoPhotoDelete" aria-label="写真を削除" onClick={() => removeMemoPhoto(index)}>×</button></div>)}
               <label className="memoPhotoAdd"><input type="file" accept="image/*" onChange={(e) => { handleMemoPhotoChange(e.target.files?.[0]); e.target.value = ""; }} /><b>＋</b><span>写真を追加</span></label>
             </div>
             <small>入力内容はこの端末に自動保存されます</small>
@@ -1206,88 +1622,17 @@ function App() {
         </section>
       )}
 
-      {selectedPhoto && currentModalPhoto && (
-        <div
-          className="photoViewer"
-          onTouchStart={handleModalTouchStart}
-          onTouchEnd={handleModalTouchEnd}
-        >
-          <div
-            className={`viewerTop ${viewerChromeVisible ? "" : "hidden"}`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button className="viewerClose" aria-label="閉じる" onClick={() => setSelectedPhoto(null)}>
-              ‹
-            </button>
-
-            <div className="viewerCount">
-              {selectedPhoto.index + 1} / {selectedPhoto.items.length}
-            </div>
-
-            {selectedPhoto.canDelete ? (
-              <button className="viewerTrash" aria-label="この写真を削除" onClick={removePhotoFromModal}>
-                🗑
-              </button>
-            ) : (
-              <span />
-            )}
-          </div>
-
-          <button
-            className="viewerTapArea"
-            onPointerDown={startViewerPinch}
-            onPointerMove={moveViewerPinch}
-            onPointerUp={endViewerPinch}
-            onPointerCancel={endViewerPinch}
-            onClick={() => setViewerChromeVisible((prev) => !prev)}
-          >
-            <img
-              className="viewerImage"
-              src={currentModalPhoto.src}
-              alt="拡大写真"
-              draggable="false"
-              style={{ transform: `translate(${viewerPosition.x}px, ${viewerPosition.y}px) scale(${viewerZoom})` }}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                setViewerZoom((prev) => (prev === 1 ? 2 : 1));
-                setViewerPosition({ x: 0, y: 0 });
-              }}
-            />
-          </button>
-
-          <div className="viewerZoomTools" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setViewerZoom((prev) => Math.max(1, prev - 0.25))}>−</button>
-            <button onClick={() => { setViewerZoom(1); setViewerPosition({ x: 0, y: 0 }); }}>等倍</button>
-            <button onClick={() => setViewerZoom((prev) => Math.min(3, prev + 0.25))}>＋</button>
-          </div>
-
-          <button
-            className="viewerNav left"
-            onClick={(e) => {
-              e.stopPropagation();
-              movePhoto(-1);
-            }}
-          >
-            ‹
-          </button>
-
-          <button
-            className="viewerNav right"
-            onClick={(e) => {
-              e.stopPropagation();
-              movePhoto(1);
-            }}
-          >
-            ›
-          </button>
-
-          <div
-            className={`viewerBottom ${viewerChromeVisible ? "" : "hidden"}`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p>{currentModalPhoto.title}</p>
-          </div>
-        </div>
+      {selectedPhoto && selectedPhoto.items.length > 0 && (
+        <PhotoViewer
+          items={selectedPhoto.items}
+          index={selectedPhoto.index}
+          canDelete={Boolean(selectedPhoto.canDelete)}
+          onIndexChange={(nextIndex) =>
+            setSelectedPhoto((prev) => (prev ? { ...prev, index: nextIndex } : prev))
+          }
+          onClose={() => setSelectedPhoto(null)}
+          onDelete={removePhotoFromModal}
+        />
       )}
 
       {cropTarget && record.photos?.[cropTarget] && (
@@ -1327,15 +1672,6 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
-
-
-
-
 
 
 
