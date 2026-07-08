@@ -7,19 +7,13 @@ const STORE_NAME = "skinRecords";
 
 const PHOTO_MOMENTS = [{ key: "afterNightWash", label: "夜洗顔後" }];
 
-const COMPARE_MOMENTS = [{ key: "all", label: "すべて" }, ...PHOTO_MOMENTS];
-
 const PHOTO_TYPES = [
   { key: "front", label: "正面" },
   { key: "right", label: "右" },
   { key: "left", label: "左" },
 ];
 
-const CHECK_ITEMS = [
-  { key: "sleepHours", label: "睡眠時間", type: "number", unit: "時間" },
-  { key: "morningWash", label: "朝洗顔", type: "check" },
-  { key: "sunscreen", label: "日焼け止め", type: "check" },
-];
+const SKIN_TAGS = ["乾燥", "赤み", "ニキビ", "かゆみ", "テカリ", "調子いい"];
 
 const WEEK_DAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -52,6 +46,7 @@ function createEmptyRecord(date) {
     photoMoment: "afterNightWash",
     photos: createEmptyPhotos(),
     checks: { sleepStart: "", sleepEnd: "", medicineApplied: false, morningWash: false, sunscreen: false },
+    skinTags: [],
     skinMemo: "",
     foodMemo: "",
     updatedAt: new Date().toISOString(),
@@ -109,6 +104,7 @@ function normalizeRecord(raw, date) {
     photoMoment,
     photos: normalizePhotos(raw.photos, oldSlot),
     checks: { sleepStart: raw.checks?.sleepStart || "", sleepEnd: raw.checks?.sleepEnd || "", medicineApplied: Boolean(raw.checks?.medicineApplied), morningWash: Boolean(raw.checks?.morningWash), sunscreen: Boolean(raw.checks?.sunscreen) },
+    skinTags: Array.isArray(raw.skinTags) ? raw.skinTags : [],
     skinMemo: raw.skinMemo || oldSlot?.memo || "",
     foodMemo: raw.foodMemo || "",
     updatedAt: raw.updatedAt || new Date().toISOString(),
@@ -203,28 +199,34 @@ async function deleteRecord(date) {
   });
 }
 
+function compressDataUrl(dataUrl, maxWidth = 1200, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement("canvas");
+
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+
+    img.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+    img.src = dataUrl;
+  });
+}
+
 function compressImage(file, maxWidth = 1200, quality = 0.82) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
     reader.onload = () => {
-      const img = new Image();
-
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / img.width);
-        const canvas = document.createElement("canvas");
-
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-
-      img.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
-      img.src = reader.result;
+      compressDataUrl(reader.result, maxWidth, quality).then(resolve, reject);
     };
 
     reader.onerror = () => reject(new Error("ファイルの読み込みに失敗しました"));
@@ -286,6 +288,7 @@ function hasAnyPhoto(record) {
 function hasAnyContent(record) {
   return (
     hasAnyPhoto(record) ||
+    (record.skinTags && record.skinTags.length > 0) ||
     record.skinMemo ||
     record.foodMemo ||
     record.previousDayMemo ||
@@ -1080,6 +1083,270 @@ function CropModal({ src, onCancel, onSave }) {
   );
 }
 
+function CompareModal({ photos, typeLabel, onClose }) {
+  const [aIndex, setAIndex] = useState(0);
+  const [bIndex, setBIndex] = useState(photos.length - 1);
+  const [mode, setMode] = useState("side");
+  const [sliderPos, setSliderPos] = useState(50);
+
+  const overlayRef = useRef(null);
+  const draggingRef = useRef(false);
+
+  const before = photos[aIndex];
+  const after = photos[bIndex];
+  const dayDiff = Math.abs(getDateDiff(before.date, after.date));
+
+  function sliderFromEvent(event) {
+    const rect = overlayRef.current.getBoundingClientRect();
+    return clampValue(((event.clientX - rect.left) / rect.width) * 100, 0, 100);
+  }
+
+  return (
+    <div className="compareModal">
+      <div className="compareTop">
+        <button onClick={onClose}>閉じる</button>
+        <strong>比較（{typeLabel}）</strong>
+        <span className="compareDiff">{dayDiff > 0 ? `${dayDiff}日間の変化` : "同じ日"}</span>
+      </div>
+
+      <div className="compareSelects">
+        <label>
+          <span>前</span>
+          <select value={aIndex} onChange={(e) => setAIndex(Number(e.target.value))}>
+            {photos.map((photo, index) => (
+              <option key={photo.date} value={index}>
+                {formatDateLabel(photo.date)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span>後</span>
+          <select value={bIndex} onChange={(e) => setBIndex(Number(e.target.value))}>
+            {photos.map((photo, index) => (
+              <option key={photo.date} value={index}>
+                {formatDateLabel(photo.date)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="compareModes">
+        <button className={mode === "side" ? "active" : ""} onClick={() => setMode("side")}>
+          並べて
+        </button>
+        <button className={mode === "overlay" ? "active" : ""} onClick={() => setMode("overlay")}>
+          重ねて
+        </button>
+      </div>
+
+      {mode === "side" ? (
+        <div className="compareSide">
+          <figure>
+            <img src={before.src} alt={`${before.date}の写真`} />
+            <figcaption>{formatDateLabel(before.date)}</figcaption>
+          </figure>
+          <figure>
+            <img src={after.src} alt={`${after.date}の写真`} />
+            <figcaption>{formatDateLabel(after.date)}</figcaption>
+          </figure>
+        </div>
+      ) : (
+        <div
+          className="compareOverlay"
+          ref={overlayRef}
+          onPointerDown={(e) => {
+            draggingRef.current = true;
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+            setSliderPos(sliderFromEvent(e));
+          }}
+          onPointerMove={(e) => {
+            if (draggingRef.current) setSliderPos(sliderFromEvent(e));
+          }}
+          onPointerUp={() => {
+            draggingRef.current = false;
+          }}
+          onPointerCancel={() => {
+            draggingRef.current = false;
+          }}
+        >
+          <img src={before.src} alt={`${before.date}の写真`} draggable={false} />
+          <img
+            src={after.src}
+            alt={`${after.date}の写真`}
+            draggable={false}
+            style={{ clipPath: `inset(0 0 0 ${sliderPos}%)` }}
+          />
+          <div className="compareDivider" style={{ left: `${sliderPos}%` }}>
+            <i>⇔</i>
+          </div>
+          <span className="compareBadge left">{formatDateLabel(before.date)}</span>
+          <span className="compareBadge right">{formatDateLabel(after.date)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelapseModal({ photos, onClose }) {
+  const [index, setIndex] = useState(0);
+  const [playing, setPlaying] = useState(true);
+
+  useEffect(() => {
+    if (!playing) return undefined;
+
+    const timer = window.setInterval(() => {
+      setIndex((prev) => (prev + 1) % photos.length);
+    }, 550);
+
+    return () => window.clearInterval(timer);
+  }, [playing, photos.length]);
+
+  const current = photos[index];
+
+  return (
+    <div className="timelapseModal">
+      <div className="compareTop">
+        <button onClick={onClose}>閉じる</button>
+        <strong>タイムラプス</strong>
+        <span className="compareDiff">
+          {index + 1} / {photos.length}
+        </span>
+      </div>
+
+      <div className="timelapseStage">
+        <img src={current.src} alt={`${current.date}の写真`} />
+        <span className="timelapseDate">{formatDateLabel(current.date)}</span>
+      </div>
+
+      <div className="timelapseControls">
+        <button className="timelapsePlay" onClick={() => setPlaying((prev) => !prev)}>
+          {playing ? "⏸" : "▶"}
+        </button>
+        <input
+          type="range"
+          min="0"
+          max={photos.length - 1}
+          value={index}
+          onChange={(e) => {
+            setPlaying(false);
+            setIndex(Number(e.target.value));
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CameraModal({ overlaySrc, onCapture, onClose }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  const [facing, setFacing] = useState("user");
+  const [ghostOpacity, setGhostOpacity] = useState(0.4);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function start() {
+      setReady(false);
+      setError("");
+
+      try {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 1280 } },
+          audio: false,
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        setReady(true);
+      } catch (err) {
+        console.error(err);
+        setError("カメラを起動できませんでした。ブラウザのカメラ許可を確認してください。");
+      }
+    }
+
+    start();
+
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, [facing]);
+
+  function capture() {
+    const video = videoRef.current;
+    if (!video || !ready || !video.videoWidth) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const ctx = canvas.getContext("2d");
+    /* インカメラはプレビューと同じ左右反転で保存する */
+    if (facing === "user") {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0);
+
+    onCapture(canvas.toDataURL("image/jpeg", 0.9));
+  }
+
+  return (
+    <div className="cameraModal">
+      <div className="compareTop">
+        <button onClick={onClose}>キャンセル</button>
+        <strong>撮影</strong>
+        <button onClick={() => setFacing((prev) => (prev === "user" ? "environment" : "user"))}>
+          切替
+        </button>
+      </div>
+
+      <div className="cameraStage">
+        <video ref={videoRef} className={facing === "user" ? "mirrored" : ""} playsInline muted autoPlay />
+        {overlaySrc && ready && (
+          <img className="cameraGhost" src={overlaySrc} alt="前回の写真" style={{ opacity: ghostOpacity }} />
+        )}
+        {error && <p className="cameraError">{error}</p>}
+      </div>
+
+      <div className="cameraControls">
+        {overlaySrc ? (
+          <label className="ghostOpacityRow">
+            <span>前回の写真の濃さ</span>
+            <input
+              type="range"
+              min="0"
+              max="0.8"
+              step="0.05"
+              value={ghostOpacity}
+              onChange={(e) => setGhostOpacity(Number(e.target.value))}
+            />
+          </label>
+        ) : (
+          <p className="cameraHint">前回の写真がまだない部位なので、そのまま撮影します</p>
+        )}
+
+        <button className="shutterButton" aria-label="撮影する" onClick={capture} disabled={!ready} />
+      </div>
+    </div>
+  );
+}
+
 function App() {
     const [selectedDate, setSelectedDate] = useState(todayString());
     const [currentMonth, setCurrentMonth] = useState(getMonthString(todayString()));
@@ -1096,12 +1363,14 @@ function App() {
     const [record, setRecord] = useState(createEmptyRecord(todayString()));
   const [allRecords, setAllRecords] = useState([]);
   const [compareType, setCompareType] = useState("front");
-  const [compareMoment, setCompareMoment] = useState("all");
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [showCalendar, setShowCalendar] = useState(false);
   const [pageTouchStart, setPageTouchStart] = useState(null);
   const [pageAnimation, setPageAnimation] = useState("");
   const [cropTarget, setCropTarget] = useState(null);
+  const [cameraTarget, setCameraTarget] = useState(null);
+  const [showCompare, setShowCompare] = useState(false);
+  const [showTimelapse, setShowTimelapse] = useState(false);
   const activeDateRef = useRef(selectedDate);
 
   const savedDateSet = useMemo(() => {
@@ -1136,11 +1405,7 @@ function App() {
 
   const galleryPhotos = useMemo(() => {
     return allRecords
-      .filter((item) => {
-        if (!item.photos?.[compareType]) return false;
-        if (compareMoment === "all") return true;
-        return item.photoMoment === compareMoment;
-      })
+      .filter((item) => item.photos?.[compareType])
       .sort((a, b) => b.date.localeCompare(a.date))
       .map((item) => {
         const momentLabel = PHOTO_MOMENTS.find((m) => m.key === item.photoMoment)?.label;
@@ -1153,7 +1418,7 @@ function App() {
           canDelete: false,
         };
       });
-  }, [allRecords, compareMoment, compareType]);
+  }, [allRecords, compareType]);
   const galleryPhotosByMonth = useMemo(() => {
     const groups = new Map();
     galleryPhotos.forEach((photo) => {
@@ -1164,29 +1429,9 @@ function App() {
     return [...groups.entries()];
   }, [galleryPhotos]);
 
-  const monthSummaryStats = useMemo(() => {
-    const recordsWithSomething = currentMonthRecords.filter(hasAnyContent);
-
-    const washCount = recordsWithSomething.filter((item) => item.checks?.morningWash).length;
-    const sunscreenCount = recordsWithSomething.filter((item) => item.checks?.sunscreen).length;
-
-    const sleepValues = recordsWithSomething
-      .map((item) => Number(item.checks?.sleepHours))
-      .filter((value) => value > 0);
-
-    const avgSleep =
-      sleepValues.length > 0
-        ? sleepValues.reduce((sum, value) => sum + value, 0) / sleepValues.length
-        : 0;
-
-    return {
-      totalDays: recordsWithSomething.length,
-      photoDays: recordsWithSomething.filter(hasAnyPhoto).length,
-      avgSleep,
-      washCount,
-      sunscreenCount,
-    };
-  }, [currentMonthRecords]);
+  const chronoPhotos = useMemo(() => {
+    return [...galleryPhotos].reverse();
+  }, [galleryPhotos]);
 
   useEffect(() => {
     activeDateRef.current = selectedDate;
@@ -1235,26 +1480,122 @@ function App() {
     }
   }
 
+  async function savePhotoData(photoKey, imageData) {
+    const targetDate = selectedDate;
+    const targetRecord = await getRecord(targetDate);
+
+    await updateRecord({
+      ...targetRecord,
+      date: targetDate,
+      photoMoment: "afterNightWash",
+      photos: {
+        ...targetRecord.photos,
+        [photoKey]: imageData,
+      },
+    });
+  }
+
   async function handlePhotoChange(photoKey, file) {
     if (!file) return;
 
     try {
-      const imageData = await compressImage(file);      const targetDate = selectedDate;
-      const targetRecord = await getRecord(targetDate);
-      const next = {
-        ...targetRecord,
-        date: targetDate,
-        photoMoment: "afterNightWash",
-        photos: {
-          ...targetRecord.photos,
-          [photoKey]: imageData,
-        },
-      };
-
-      await updateRecord(next);
+      const imageData = await compressImage(file);
+      await savePhotoData(photoKey, imageData);
     } catch (error) {
       console.error(error);
       alert("写真の保存に失敗しました");
+    }
+  }
+
+  async function handleCameraCapture(dataUrl) {
+    const target = cameraTarget;
+    setCameraTarget(null);
+    if (!target) return;
+
+    try {
+      const imageData = await compressDataUrl(dataUrl, 1200, 0.85);
+      await savePhotoData(target, imageData);
+    } catch (error) {
+      console.error(error);
+      alert("写真の保存に失敗しました");
+    }
+  }
+
+  function ghostPhotoFor(photoKey) {
+    const previous = allRecords.find((item) => item.date < selectedDate && item.photos?.[photoKey]);
+    return previous?.photos?.[photoKey] || null;
+  }
+
+  function toggleSkinTag(tag) {
+    const current = record.skinTags || [];
+    const next = current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag];
+    updateRecord({ ...record, skinTags: next });
+  }
+
+  async function exportAllData() {
+    try {
+      const records = await getAllRecords();
+      const payload = {
+        app: "skin-photo-diary",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        records,
+        freeMemo,
+        memoPhotos,
+      };
+
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `skin-diary-backup-${todayString()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+    } catch (error) {
+      console.error(error);
+      alert("エクスポートに失敗しました");
+    }
+  }
+
+  async function importAllData(file) {
+    if (!file) return;
+
+    try {
+      const payload = JSON.parse(await file.text());
+
+      if (payload?.app !== "skin-photo-diary" || !Array.isArray(payload.records)) {
+        alert("バックアップファイルの形式が違います");
+        return;
+      }
+
+      const ok = window.confirm(
+        `${payload.records.length}日分の記録を読み込みます。同じ日付の記録は上書きされます。よろしいですか？`
+      );
+      if (!ok) return;
+
+      for (const raw of payload.records) {
+        if (!raw?.date) continue;
+        await saveRecord(normalizeRecord(raw, raw.date));
+      }
+
+      if (typeof payload.freeMemo === "string" && payload.freeMemo) {
+        setFreeMemo(payload.freeMemo);
+        localStorage.setItem("skin-free-memo", payload.freeMemo);
+      }
+
+      if (Array.isArray(payload.memoPhotos) && payload.memoPhotos.length) {
+        setMemoPhotos(payload.memoPhotos);
+        localStorage.setItem("skin-free-memo-photos", JSON.stringify(payload.memoPhotos));
+      }
+
+      await loadAllRecords();
+      await loadRecord(selectedDate);
+      alert(`${payload.records.length}日分の記録を読み込みました`);
+    } catch (error) {
+      console.error(error);
+      alert("インポートに失敗しました");
     }
   }
 
@@ -1666,6 +2007,17 @@ function App() {
 
                         <span>＋</span>
                         <small>{photo.label}</small>
+
+                        <button
+                          type="button"
+                          className="ghostCamButton"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setCameraTarget(photo.key);
+                          }}
+                        >
+                          📷 重ねて撮る
+                        </button>
                       </label>
                     )}
                   </div>
@@ -1694,6 +2046,22 @@ function App() {
             </div></section>
 
           <section className="memoCard">
+            <div className="tagBlock">
+              <span>{selectedDate === todayString() ? "今日の肌の状態" : "この日の肌の状態"}</span>
+              <div className="tagChips">
+                {SKIN_TAGS.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={record.skinTags?.includes(tag) ? "active" : ""}
+                    onClick={() => toggleSkinTag(tag)}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <label>
               <span>{selectedDate === todayString() ? "今日の肌メモ" : "この日の肌メモ"}</span>
               <textarea
@@ -1743,6 +2111,13 @@ function App() {
             ))}
           </div>
 
+          {galleryPhotos.length >= 2 && (
+            <div className="galleryActions">
+              <button onClick={() => setShowCompare(true)}>◧ 比較</button>
+              <button onClick={() => setShowTimelapse(true)}>▶ タイムラプス</button>
+            </div>
+          )}
+
           {galleryPhotos.length === 0 ? (
             <div className="emptyGallery">
               <p>この条件の写真はまだありません。</p>
@@ -1789,6 +2164,27 @@ function App() {
             </div>
             <small>入力内容はこの端末に自動保存されます</small>
           </section>
+
+          <section className="dataCard">
+            <h3>データのバックアップ</h3>
+            <p>
+              記録と写真はこの端末のブラウザ内にだけ保存されています。機種変更やデータ消去に備えて、ときどきファイルに書き出して保存してください。
+            </p>
+            <div className="dataButtons">
+              <button onClick={exportAllData}>書き出す</button>
+              <label className="importButton">
+                読み込む
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(e) => {
+                    importAllData(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+          </section>
         </section>
       )}
 
@@ -1810,6 +2206,26 @@ function App() {
           src={record.photos[cropTarget]}
           onCancel={() => setCropTarget(null)}
           onSave={saveCroppedPhoto}
+        />
+      )}
+
+      {showCompare && chronoPhotos.length >= 2 && (
+        <CompareModal
+          photos={chronoPhotos}
+          typeLabel={PHOTO_TYPES.find((type) => type.key === compareType)?.label}
+          onClose={() => setShowCompare(false)}
+        />
+      )}
+
+      {showTimelapse && chronoPhotos.length >= 2 && (
+        <TimelapseModal photos={chronoPhotos} onClose={() => setShowTimelapse(false)} />
+      )}
+
+      {cameraTarget && (
+        <CameraModal
+          overlaySrc={ghostPhotoFor(cameraTarget)}
+          onCapture={handleCameraCapture}
+          onClose={() => setCameraTarget(null)}
         />
       )}
     </main>
